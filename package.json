@@ -7,6 +7,8 @@
     "build": "prisma generate && prisma migrate deploy && next build",
     "start": "next start",
     "lint": "next lint",
+    "check": "node scripts/check-env.mjs",
+    "seed": "prisma db seed",
     "test": "vitest run",
     "test:unit": "vitest run tests/unit_tests.test.js",
     "test:integration": "vitest run tests/integration_tests.test.js",
@@ -41,5 +43,8 @@
     "prisma": "^6.14.0",
     "tailwindcss": "^4",
     "vitest": "^3.2.7"
+  },
+  "prisma": {
+    "seed": "node prisma/seed.mjs"
   }
 }

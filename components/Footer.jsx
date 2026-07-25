@@ -14,17 +14,17 @@ const Footer = () => {
         {
             title: "PRODUCTS",
             links: [
-                { text: "Earphones", path: '/', icon: null },
-                { text: "Headphones", path: '/', icon: null },
-                { text: "Smartphones", path: '/', icon: null },
-                { text: "Laptops", path: '/', icon: null },
+                { text: "Earbuds", path: '/shop?search=Earbuds', icon: null },
+                { text: "Headphones", path: '/shop?search=Headphones', icon: null },
+                { text: "Speakers", path: '/shop?search=Speaker', icon: null },
+                { text: "Watches", path: '/shop?search=Watch', icon: null },
             ]
         },
         {
             title: "WEBSITE?",
             links: [
                 { text: "Home", path: '/', icon: null },
-                { text: "Privacy Policy", path: '/', icon: null },
+                { text: "All Products", path: '/shop', icon: null },
                 { text: "Become Plus Member", path: '/pricing', icon: null },
                 { text: "Create Your Store", path: '/create-store', icon: null },
             ]
@@ -32,9 +32,9 @@ const Footer = () => {
         {
             title: "CONTACT",
             links: [
-                { text: "+1-212-456-7890", path: '/', icon: MailIcon },
-                { text: "contact@example.com", path: '/', icon: PhoneIcon },
-                { text: "794 Francisco, 94102", path: '/', icon: MapPinIcon }
+                { text: "+1-212-456-7890", path: null, icon: PhoneIcon },
+                { text: "contact@example.com", path: null, icon: MailIcon },
+                { text: "794 Francisco, 94102", path: null, icon: MapPinIcon }
             ]
         }
     ];
@@ -71,7 +71,9 @@ const Footer = () => {
                                     {section.links.map((link, i) => (
                                         <li key={i} className="flex items-center gap-2">
                                             {link.icon && <link.icon />}
-                                            <Link href={link.path} className="hover:underline transition">{link.text}</Link>
+                                            {link.path
+                                                ? <Link href={link.path} className="hover:underline transition">{link.text}</Link>
+                                                : <span>{link.text}</span>}
                                         </li>
                                     ))}
                                 </ul>
