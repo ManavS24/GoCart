@@ -151,6 +151,8 @@ and the whole stack fits in free tiers.
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — system and data model diagrams,
   the checkout sequence, and the reasoning behind the main design decisions.
+- [docs/DEMO.md](docs/DEMO.md) — the three-minute walkthrough, setup checklist
+  and fallback plan used to record the demo.
 
 ## License
 
