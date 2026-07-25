@@ -37,10 +37,10 @@ vi.mock('stripe', () => {
     return { default: FakeStripe }
 })
 vi.mock('@/configs/imageKit', () => ({
-    default: { upload: (...a) => imagekitUpload(...a), url: () => 'https://ik.test/img.webp' },
+    default: () => ({ upload: (...a) => imagekitUpload(...a), url: () => 'https://ik.test/img.webp' }),
 }))
 vi.mock('@/configs/openai', () => ({
-    openai: { chat: { completions: { create: (...a) => openaiCreate(...a) } } },
+    getOpenAI: () => ({ chat: { completions: { create: (...a) => openaiCreate(...a) } } }),
 }))
 vi.mock('@/inngest/client', () => ({ inngest: { send: (...a) => inngestSend(...a) } }))
 

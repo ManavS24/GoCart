@@ -1,4 +1,4 @@
-import { openai } from "@/configs/openai";
+import { getOpenAI } from "@/configs/openai";
 import authSeller from "@/middlewares/authSeller";
 import { getAuth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
@@ -29,7 +29,7 @@ async function main(base64Image, mimeType) {
         },
     ];
 
-    const response = await openai.chat.completions.create({
+    const response = await getOpenAI().chat.completions.create({
         model: process.env.OPENAI_MODEL,
         messages,
     });

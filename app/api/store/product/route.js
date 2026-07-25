@@ -1,4 +1,4 @@
-import imagekit from "@/configs/imageKit"
+import getImageKit from "@/configs/imageKit"
 import prisma from "@/lib/prisma"
 import authSeller from "@/middlewares/authSeller"
 import {getAuth} from "@clerk/nextjs/server"
@@ -29,6 +29,7 @@ export async function POST(request){
             return NextResponse.json({error: 'invalid product price'}, { status: 400 } )
         }
 
+        const imagekit = getImageKit()
         const imagesUrl = await Promise.all(images.map(async (image) => {
             const buffer = Buffer.from(await image.arrayBuffer());
             const response = await imagekit.upload({

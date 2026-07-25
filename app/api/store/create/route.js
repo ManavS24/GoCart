@@ -1,4 +1,4 @@
-import imagekit from "@/configs/imageKit";
+import getImageKit from "@/configs/imageKit";
 import prisma from "@/lib/prisma";
 import { getAuth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
@@ -40,6 +40,7 @@ export async function POST(request){
             return NextResponse.json({error: "username already taken"}, {status: 400})
         }
 
+        const imagekit = getImageKit()
         const buffer = Buffer.from(await image.arrayBuffer());
         const response = await imagekit.upload({
             file: buffer,
