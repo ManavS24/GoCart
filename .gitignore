@@ -30,8 +30,10 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
-.env
+# env files. Every variant, not just `.env` -- Next.js's own convention is
+# `.env.local`. The negation must stay below the pattern it exempts.
+.env*
+!.env.example
 
 # vercel
 .vercel

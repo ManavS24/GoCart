@@ -16,7 +16,7 @@ export default function OrdersAreaChart({ allOrders }) {
 
     return (
         <div className="w-full max-w-4xl h-[300px] text-xs">
-            <h3 className="text-lg font-medium text-slate-800 mb-4 pt-2 text-right"> <span className='text-slate-500'>Orders /</span> Day</h3>
+            <h3 className="text-lg font-medium text-slate-800 mb-4 pt-2 text-right"> <span className='text-slate-500'>Orders /</span> Day <span className='text-slate-400 font-normal'>(last 30 days)</span></h3>
             <ResponsiveContainer width="100%" height="100%"> 
                 <AreaChart data={chartData}>
                     <CartesianGrid strokeDasharray="3 3" />

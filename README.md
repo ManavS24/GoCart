@@ -68,9 +68,11 @@ Two things that will otherwise cost you time:
 
 - **`ADMIN_EMAIL` must be the email you sign up with**, or `/admin` stays locked
   and you cannot approve your own seller store.
-- **`STRIPE_WEBHOOK_SECRET` comes later.** It is issued once a deployed URL
-  exists to point the webhook at. Everything except payment confirmation works
-  without it.
+- **`STRIPE_WEBHOOK_SECRET` comes later, and card checkout is refused until it
+  is set.** It is issued once a deployed URL exists to point the webhook at.
+  Until then `POST /api/orders` rejects `STRIPE` with a 503 and cash on delivery
+  carries the whole flow — deliberately, because without the secret a card
+  payment would be captured by Stripe and never confirmed by the app.
 
 `npm run check` reports exactly which variables are missing or malformed and
 whether the database is reachable, so a bad credential fails there rather than
@@ -82,16 +84,51 @@ inside Next, Prisma or Clerk.
 | --- | --- |
 | `npm run dev` | Dev server (Turbopack) |
 | `npm run check` | Validate `.env` and database connectivity |
+| `npm run check -- --production` | The same, with deferred variables treated as required — the pre-release gate |
 | `npm run seed` | Populate a demo catalogue |
-| `npm run build` | `prisma generate` → `migrate deploy` → `next build` |
+| `npm run build` | `prisma generate` → `next build`. **Does not touch the database.** |
+| `npm run migrate:deploy` | Apply pending migrations — a deliberate release step, not part of the build |
+| `npm run migrate:status` | Show which migrations are applied and which are pending |
 | `npm start` | Serve the production build |
 | `npm run lint` | ESLint (`next/core-web-vitals`) |
 | `npm test` | Both test suites |
 | `npm run test:unit` | Unit suite only |
 | `npm run test:integration` | Integration suite only |
 
-`npm run build` applies migrations, so it needs a live `DATABASE_URL`. To build
-without one, call `npx next build` directly.
+`npm run build` only compiles; it needs no database. Migrations are applied
+separately — see *Releases*.
+
+## Releases
+
+Migrations are **not** part of the build. They used to be, which meant a schema
+change landed while the previous version was still serving traffic, two
+concurrent builds raced for the same lock, and rolling a deployment back left
+the schema ahead of the code with nothing to reverse it.
+
+Applying a migration is now something you do, in this order:
+
+1. **Snapshot.** In Neon, create a branch from `main` — that is the rollback
+   point, and it takes seconds.
+2. **Migrate.** Run the *Migrate database* workflow in GitHub Actions (it asks
+   for confirmation and prints the pending list first), or locally with a
+   `DIRECT_URL` in scope:
+   ```bash
+   npm run migrate:status   # what is pending
+   npm run migrate:deploy   # apply it
+   ```
+3. **Deploy.** Push to `main` as usual.
+
+That order is only safe because migrations are **additive**: a new column is
+nullable, a new table is unreferenced, nothing is dropped or narrowed. The old
+code therefore keeps working against the new schema for the window between
+steps 2 and 3. A test enforces this — a migration containing `DROP COLUMN`,
+`DROP TABLE`, a rename, or an `ALTER COLUMN` that narrows a type or adds
+`NOT NULL` will fail the suite unless it carries an explicit
+`-- expand-contract:` note explaining the plan.
+
+**To roll back**, redeploy the previous commit. The schema stays where it is,
+which is harmless for an additive migration. If a migration itself must be
+undone, restore the Neon branch from step 1 — there are no down migrations.
 
 ## Testing
 
@@ -128,13 +165,17 @@ and the whole stack fits in free tiers.
 2. Add every variable from `.env.example` **before the first build** — pages
    wrapped in `<ClerkProvider>` are prerendered and the build fails on an
    invalid Clerk key.
-3. Deploy. The build runs `prisma migrate deploy`, so migrations apply
-   automatically.
+3. Apply migrations **before** deploying, then deploy. The build no longer
+   touches the database — see *Releases* below.
 4. In Stripe, add a webhook to `https://<your-app>/api/stripe` for
    `payment_intent.succeeded` and `payment_intent.canceled`, then set
-   `STRIPE_WEBHOOK_SECRET` and redeploy.
+   `STRIPE_WEBHOOK_SECRET` and redeploy. **Card checkout stays disabled until
+   this step completes**; the app refuses `STRIPE` orders rather than taking a
+   payment it cannot confirm.
 5. In Inngest, sync the app at `https://<your-app>/api/inngest`.
 6. Seed the production database once: `npm run seed`.
+7. Confirm the deployment is fully configured: `npm run check -- --production`,
+   which treats deferred variables such as `STRIPE_WEBHOOK_SECRET` as required.
 
 ## Troubleshooting
 

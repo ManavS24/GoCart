@@ -25,7 +25,12 @@ const loadEnv = () => {
     return env
 }
 
-// [key, required, matcher, hint]
+// `--production` promotes deferred variables to required, so a deploy cannot go
+// out half-configured. Run it as the last gate before release.
+const STRICT = process.argv.includes('--production')
+
+// [key, required, matcher, hint], where required is true, false, or
+// 'production' (optional locally, required under --production).
 const CHECKS = [
     ['DATABASE_URL', true, /^postgres(ql)?:\/\/[^:]+:[^@]+@.+\/.+/, 'Neon pooled connection string'],
     ['DIRECT_URL', true, /^postgres(ql)?:\/\/[^:]+:[^@]+@.+\/.+/, 'Neon direct connection string'],
@@ -39,7 +44,7 @@ const CHECKS = [
     ['INNGEST_EVENT_KEY', true, /.+/, 'from the Inngest dashboard'],
     ['INNGEST_SIGNING_KEY', true, /.+/, 'from the Inngest dashboard'],
     ['NEXT_PUBLIC_CURRENCY_SYMBOL', true, /.+/, 'e.g. $'],
-    ['STRIPE_WEBHOOK_SECRET', false, /^whsec_/, 'set after first deploy (Phase 5)'],
+    ['STRIPE_WEBHOOK_SECRET', 'production', /^whsec_/, 'required to take card payments; Stripe checkout is refused without it'],
     ['OPENAI_API_KEY', false, /.+/, 'optional — only powers AI product autofill'],
     ['OPENAI_BASE_URL', false, /^https?:\/\//, 'optional'],
     ['OPENAI_MODEL', false, /.+/, 'optional'],
@@ -59,15 +64,16 @@ let deferred = 0
 for (const [key, required, matcher, hint] of CHECKS) {
     const raw = env[key] ?? ''
     const unset = !raw || PLACEHOLDER.test(raw)
+    const mustHave = required === true || (required === 'production' && STRICT)
 
     if (unset) {
-        if (required) { rows.push(['MISSING', key, hint]); failed++ }
+        if (mustHave) { rows.push(['MISSING', key, hint]); failed++ }
         else { rows.push(['SKIP', key, hint]); deferred++ }
         continue
     }
     if (!matcher.test(raw)) {
-        rows.push([required ? 'BAD' : 'BAD?', key, `expected: ${hint}`])
-        if (required) failed++
+        rows.push([mustHave ? 'BAD' : 'BAD?', key, `expected: ${hint}`])
+        if (mustHave) failed++
         continue
     }
     rows.push(['OK', key, ''])
@@ -85,6 +91,15 @@ if (failed) {
 }
 
 console.log(`\n  All required variables present${deferred ? ` (${deferred} optional/deferred skipped)` : ''}.`)
+
+// Say what a deferred webhook secret costs, rather than a quiet `skip`.
+if (!STRICT) {
+    const secret = env.STRIPE_WEBHOOK_SECRET ?? ''
+    if (!secret || PLACEHOLDER.test(secret)) {
+        console.log('  Note: STRIPE_WEBHOOK_SECRET is unset, so card checkout will be refused')
+        console.log('        (cash on delivery still works). Re-run with --production before release.')
+    }
+}
 
 // Credentials look right; confirm the database is actually reachable.
 try {

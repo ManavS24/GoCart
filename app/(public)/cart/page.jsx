@@ -3,6 +3,7 @@ import Counter from "@/components/Counter";
 import OrderSummary from "@/components/OrderSummary";
 import PageTitle from "@/components/PageTitle";
 import { deleteItemFromCart } from "@/lib/features/cart/cartSlice";
+import { fetchProductsByIds } from "@/lib/features/product/productSlice";
 import { Trash2Icon } from "lucide-react";
 import Image from "next/image";
 import { useEffect, useState } from "react";
@@ -13,7 +14,8 @@ export default function Cart() {
     const currency = process.env.NEXT_PUBLIC_CURRENCY_SYMBOL || '$';
     
     const { cartItems } = useSelector(state => state.cart);
-    const products = useSelector(state => state.product.list);
+    // Keyed by id, not the page being browsed: a basket outlives it.
+    const productsById = useSelector(state => state.product.byId);
 
     const dispatch = useDispatch();
 
@@ -24,7 +26,7 @@ export default function Cart() {
         setTotalPrice(0);
         const cartArray = [];
         for (const [key, value] of Object.entries(cartItems)) {
-            const product = products.find(product => product.id === key);
+            const product = productsById[key];
             if (product) {
                 cartArray.push({
                     ...product,
@@ -40,11 +42,15 @@ export default function Cart() {
         dispatch(deleteItemFromCart({ productId }))
     }
 
+    // Fetched by id, so a paged catalogue cannot make a cart look emptier.
     useEffect(() => {
-        if (products.length > 0) {
-            createCartArray();
-        }
-    }, [cartItems, products]);
+        const missing = Object.keys(cartItems).filter(id => !productsById[id]);
+        if (missing.length > 0) dispatch(fetchProductsByIds({ ids: missing }));
+    }, [cartItems, productsById, dispatch]);
+
+    useEffect(() => {
+        createCartArray();
+    }, [cartItems, productsById]);
 
     return cartArray.length > 0 ? (
         <div className="min-h-screen mx-6 text-slate-800">

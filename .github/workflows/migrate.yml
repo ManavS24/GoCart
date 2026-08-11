@@ -1,0 +1,55 @@
+name: Migrate database
+
+# Deliberately manual: applying a migration is an act someone performs and
+# Actions records, not a side effect of shipping.
+#
+# Release order: snapshot the Neon branch, run this, then deploy. Safe only
+# because migrations are additive, which tests/unit_tests.test.js enforces.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "migrate" to confirm you have a snapshot and intend to apply pending migrations'
+        required: true
+        type: string
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    # Gate the credentials behind an environment so the run can require review.
+    environment: production
+    steps:
+      - name: Check confirmation
+        if: inputs.confirm != 'migrate'
+        run: |
+          echo "::error::Confirmation text did not match. Nothing was applied."
+          exit 1
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      # What is about to change, recorded in the run log before anything runs.
+      - name: Show pending migrations
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+        run: npm run migrate:status
+
+      - name: Apply migrations
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+        run: npm run migrate:deploy
+
+      - name: Confirm the schema is settled
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+        run: npm run migrate:status

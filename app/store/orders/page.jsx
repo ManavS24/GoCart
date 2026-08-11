@@ -1,4 +1,5 @@
 'use client'
+import { ORDER_STATUS_SEQUENCE } from '@/lib/orderStatus'
 import { useEffect, useState } from "react"
 import Loading from "@/components/Loading"
 import { useAuth } from "@clerk/nextjs"
@@ -100,10 +101,14 @@ export default function StoreOrders() {
                                             onChange={e => updateOrderStatus(order.id, e.target.value)}
                                             className="border-gray-300 rounded-md text-sm focus:ring focus:ring-blue-200"
                                         >
-                                            <option value="ORDER_PLACED">ORDER_PLACED</option>
-                                            <option value="PROCESSING">PROCESSING</option>
-                                            <option value="SHIPPED">SHIPPED</option>
-                                            <option value="DELIVERED">DELIVERED</option>
+                                            {/* Fulfilment only moves forward; the server refuses the rest with a 409. */}
+                                            {ORDER_STATUS_SEQUENCE.map(status => (
+                                                <option
+                                                    key={status}
+                                                    value={status}
+                                                    disabled={ORDER_STATUS_SEQUENCE.indexOf(status) < ORDER_STATUS_SEQUENCE.indexOf(order.status)}
+                                                >{status}</option>
+                                            ))}
                                         </select>
                                     </td>
                                     <td className="px-4 py-3 text-gray-500">

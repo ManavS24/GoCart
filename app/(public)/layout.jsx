@@ -16,10 +16,10 @@ export default function PublicLayout({ children }) {
     const {user} = useUser()
     const {getToken} = useAuth()
 
-    const {cartItems} = useSelector((state)=>state.cart)
+    const {cartItems, syncError} = useSelector((state)=>state.cart)
 
     useEffect(()=>{
-        dispatch(fetchProducts())
+        dispatch(fetchProducts({}))
     },[])
 
     useEffect(()=>{
@@ -43,6 +43,13 @@ export default function PublicLayout({ children }) {
         <>
             <Banner />
             <Navbar />
+            {/* A stalled sync is otherwise invisible. The basket still works. */}
+            {syncError && (
+                <div role="status" className="bg-amber-50 border-b border-amber-200 text-amber-800 text-sm text-center py-2 px-4">
+                    Your cart could not be saved. It still works here, but may not
+                    follow you to another device.
+                </div>
+            )}
             {children}
             <Footer />
         </>

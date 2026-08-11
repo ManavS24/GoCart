@@ -1,7 +1,12 @@
 import getImageKit from "@/configs/imageKit";
+import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
+import { MAX_IMAGE_BYTES, isAllowedImageType } from "@/lib/uploadLimits";
+import { rateLimit } from "@/lib/rateLimit";
+import { ensureUser } from "@/lib/ensureUser";
 import { getAuth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
+import { apiError } from "@/lib/apiError";
 
 export async function POST(request){
     try {
@@ -9,6 +14,18 @@ export async function POST(request){
         if(!userId){
             return NextResponse.json({error: "not authorized"}, {status: 401})
         }
+        // The Clerk -> Inngest sync is asynchronous; this write cannot wait for it.
+        await ensureUser(userId)
+
+        const limited = rateLimit({ key: `store-create:${userId}`, limit: 5, windowMs: 60_000 })
+        if (!limited.allowed) {
+            logger.warn('rate_limited', { route: '/api/store/create', userId })
+            return NextResponse.json(
+                { error: 'Too many requests. Please wait a moment and try again.' },
+                { status: 429, headers: { 'Retry-After': String(limited.retryAfterSeconds) } }
+            )
+        }
+
         const formData = await request.formData()
 
         const name = formData.get("name")
@@ -22,6 +39,14 @@ export async function POST(request){
 
         if(!name || !username || !description || !email || !contact || !address || !image){
             return NextResponse.json({error: "missing store info"}, {status: 400})
+        }
+
+        if(!isAllowedImageType(image?.type)){
+            return NextResponse.json({error: "unsupported image type"}, {status: 400})
+        }
+
+        if(image.size > MAX_IMAGE_BYTES){
+            return NextResponse.json({error: "logo is too large"}, {status: 400})
         }
 
         const store = await prisma.store.findFirst({
@@ -78,8 +103,7 @@ export async function POST(request){
         return NextResponse.json({message: "applied, waiting for approval"})
 
     } catch (error) {
-        console.error(error);
-        return NextResponse.json({error: error.code || error.message}, { status: 400 })
+        return apiError(error, 500, request)
     }
 }
 
@@ -101,7 +125,6 @@ export async function GET(request) {
 
         return NextResponse.json({status: "not registered"})
     } catch (error) {
-        console.error(error);
-        return NextResponse.json({error: error.code || error.message}, { status: 400 })
+        return apiError(error, 500, request)
     }
 }

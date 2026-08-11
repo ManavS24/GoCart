@@ -38,6 +38,9 @@ model Product {
     store      Store       @relation(fields: [storeId], references: [id], onDelete: Cascade)
     orderItems OrderItem[]
     rating     Rating[]
+
+    // The seller product list and every foreign-key check scan this column.
+    @@index([storeId])
 }
 
 enum OrderStatus {
@@ -64,12 +67,25 @@ model Order {
     createdAt     DateTime      @default(now())
     updatedAt     DateTime      @updatedAt
     isCouponUsed  Boolean       @default(false)
+    // As a column, not only in the JSON snapshot: redemption is then "a placed
+    // order that used this coupon", needing no second ledger to keep in step.
+    couponCode    String?
     coupon        Json          @default("{}")
     orderItems    OrderItem[]
+    statusHistory OrderStatusChange[]
 
     user    User    @relation("BuyerRelation", fields: [userId], references: [id])
     store   Store   @relation(fields: [storeId], references: [id])
     address Address @relation(fields: [addressId], references: [id])
+
+    // Filtered by owner and sorted by date; a composite serves both halves.
+    @@index([userId, createdAt])
+    // Coupon redemption counts, per user and platform-wide.
+    @@index([couponCode])
+    // Seller order list: same shape.
+    @@index([storeId, createdAt])
+    // Not queried directly; Postgres needs it when an Address is deleted.
+    @@index([addressId])
 }
 
 model OrderItem {
@@ -82,6 +98,9 @@ model OrderItem {
     product Product @relation(fields: [productId], references: [id])
 
     @@id([orderId, productId])
+    // orderId needs no index of its own: it leads the primary key above.
+    // productId does, for the foreign-key check when a Product is deleted.
+    @@index([productId])
 }
 
 model Rating {
@@ -98,6 +117,8 @@ model Rating {
     product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
     @@unique([userId, productId, orderId])
+    // userId needs none of its own: it leads the unique constraint above.
+    @@index([productId])
 }
 
 model Address {
@@ -115,6 +136,9 @@ model Address {
 
     Order Order[]
     user  User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    // Address book lookups, and the cascade when a User is deleted.
+    @@index([userId])
 }
 
 model Coupon {
@@ -126,13 +150,48 @@ model Coupon {
     isPublic    Boolean
     expiresAt   DateTime
     createdAt   DateTime @default(now())
+    // Null means unlimited; one use per shopper applies regardless.
+    maxRedemptions Int?
 }
 
-// Ledger making Stripe webhook handling idempotent across retries and replays.
+// Fulfilment history: the Order row holds only the latest status, so without
+// this there is no record that a transition happened, or when.
+model OrderStatusChange {
+    id        String      @id @default(cuid())
+    orderId   String
+    storeId   String
+    from      OrderStatus
+    to        OrderStatus
+    changedAt DateTime    @default(now())
+
+    order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+    @@index([orderId])
+}
+
+// One row per checkout submission, keyed by a value the client holds steady for
+// the life of a basket, so a double-click produces one set of orders. Written in
+// the same transaction as the orders, so it never claims an uncreated basket.
+model CheckoutRequest {
+    key           String        @id
+    userId        String
+    orderIds      String[]
+    paymentMethod PaymentMethod
+    // Set once the session exists, so a replay returns the same payment page.
+    sessionUrl    String?
+    createdAt     DateTime      @default(now())
+
+    @@index([userId])
+}
+
+// Two-phase ledger making webhook handling idempotent: `processedAt` records
+// when the id was claimed, `completedAt` only once the mutations committed. A
+// claim alone must not suppress a retry, or a failed delivery loses its payment.
 model ProcessedWebhookEvent {
-    id          String   @id
+    id          String    @id
     type        String
-    processedAt DateTime @default(now())
+    processedAt DateTime  @default(now())
+    completedAt DateTime?
 }
 
 model Store {

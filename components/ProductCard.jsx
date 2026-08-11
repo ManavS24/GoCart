@@ -7,7 +7,13 @@ const ProductCard = ({ product }) => {
 
     const currency = process.env.NEXT_PUBLIC_CURRENCY_SYMBOL || '$'
 
-    const rating = Math.round(product.rating.reduce((acc, curr) => acc + curr.rating, 0) / product.rating.length);
+    // The catalogue sends an average; the product page sends the reviews.
+    const rating = Math.round(
+        product.ratingAverage
+        ?? (product.rating?.length
+            ? product.rating.reduce((acc, curr) => acc + curr.rating, 0) / product.rating.length
+            : 0)
+    );
 
     return (
         <Link href={`/product/${product.id}`} className=' group max-xl:mx-auto'>

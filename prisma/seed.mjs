@@ -1,11 +1,6 @@
-// Populates a fresh database with a demo-ready catalogue: three sellers (two
-// live, one awaiting approval so the admin flow has something to act on),
-// sixteen products, coupons and ratings.
-//
-// Product imagery is uploaded to ImageKit from assets/ on first run and reused
-// afterwards. Every write is an upsert, so the script is safe to re-run.
-//
-//   npm run seed
+// Populates a fresh database with a demo-ready catalogue (`npm run seed`).
+// Imagery uploads to ImageKit on first run; every write is an upsert, so the
+// script is safe to re-run.
 
 import { PrismaClient } from '@prisma/client'
 import ImageKit from 'imagekit'
@@ -33,8 +28,8 @@ const imagekit = new ImageKit({
     urlEndpoint: process.env.IMAGEKIT_URL_ENDPOINT,
 })
 
-// Uploads assets/<file> once and returns an optimised URL. `overwriteFile`
-// with a stable name keeps re-runs from filling the media library with copies.
+// `overwriteFile` with a stable name keeps re-runs from filling the media
+// library with copies.
 const uploaded = new Map()
 const upload = async (file, folder) => {
     if (uploaded.has(file)) return uploaded.get(file)

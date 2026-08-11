@@ -1,6 +1,10 @@
+import { PLACED_ORDER } from "@/lib/placedOrder";
 import prisma from "@/lib/prisma";
+import { OrderStatus } from "@prisma/client";
+import { ensureUser } from "@/lib/ensureUser";
 import { getAuth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
+import { apiError } from "@/lib/apiError";
 
 
 export async function POST(request){
@@ -9,23 +13,32 @@ export async function POST(request){
         if(!userId){
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
         }
+        // The Clerk -> Inngest sync is asynchronous; this write cannot wait for it.
+        await ensureUser(userId)
+
         const {orderId, productId, rating, review} = await request.json()
 
         if(!Number.isInteger(rating) || rating < 1 || rating > 5){
             return NextResponse.json({ error: "rating must be between 1 and 5" }, { status: 400 })
         }
 
-        // Must match on line item too, else any buyer could rate any product.
+        // Matched on line item, else any buyer could rate any product, and on
+        // delivery, else a review says nothing about it.
         const order = await prisma.order.findFirst({
             where: {
                 id: orderId,
                 userId,
-                orderItems: { some: { productId } }
+                orderItems: { some: { productId } },
+                status: OrderStatus.DELIVERED,
+                ...PLACED_ORDER,
             }
         })
 
         if(!order){
-            return NextResponse.json({ error: "Order not found" }, { status: 404 })
+            return NextResponse.json(
+                { error: "You can review a product once its order has been delivered" },
+                { status: 404 }
+            )
         }
 
          const isAlreadyRated = await prisma.rating.findFirst({where: {productId, orderId}})
@@ -42,8 +55,7 @@ export async function POST(request){
 
       
     } catch (error) {
-        console.error(error);
-        return NextResponse.json({error: error.code || error.message}, { status: 400 })
+        return apiError(error, 500, request)
     }
 }
 
@@ -59,7 +71,6 @@ export async function GET(request){
 
         return NextResponse.json({ratings})
     } catch (error) {
-        console.error(error);
-        return NextResponse.json({error: error.code || error.message}, { status: 400 })
+        return apiError(error, 500, request)
     }
 }

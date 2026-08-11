@@ -1,3 +1,4 @@
+import { describeError, logger } from "@/lib/logger"
 import { clerkClient } from "@clerk/nextjs/server"
 
 
@@ -15,11 +16,20 @@ const authAdmin = async (userId) => {
         const client = await clerkClient()
         const user = await client.users.getUser(userId)
 
-        const email = user.emailAddresses[0]?.emailAddress?.toLowerCase()
+        // The primary address, and only once Clerk has confirmed ownership.
+        // `emailAddresses[0]` trusted array order for an authorization decision
+        // and accepted an address whose ownership was never proven.
+        const primary = user.emailAddresses?.find(
+            address => address.id === user.primaryEmailAddressId
+        )
+
+        if (primary?.verification?.status !== 'verified') return false
+
+        const email = primary.emailAddress?.toLowerCase()
 
         return Boolean(email) && adminEmails.includes(email)
     } catch (error) {
-        console.error(error)
+        logger.error('auth_admin_failed', describeError(error))
         return false
     }
 }

@@ -10,6 +10,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: a secret is only interesting if it was ever committed,
+          # and a shallow clone cannot see that.
+          fetch-depth: 0
+
+      # `.gitignore` prevents an accidental commit; this detects the rest.
+      - name: Scan for committed secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-node@v4
         with:
@@ -18,17 +28,20 @@ jobs:
 
       - run: npm ci
 
+      # Without this the pipeline stays green while advisories accumulate.
+      # Moderates are reported, not fatal.
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+
       - run: npm run lint
 
       # No database, network or real credentials required.
       - run: npm test
 
-      # Catches build-time breakage. Uses format-valid dummy Clerk keys because
-      # pages wrapped in <ClerkProvider> are prerendered, and next build rejects
-      # a malformed publishable key. `next build` is called directly to skip the
-      # `prisma migrate deploy` step in the npm build script, which needs a live DB.
+      # Dummy Clerk keys must be format-valid: pages wrapped in <ClerkProvider>
+      # are prerendered. Runs the real build script, which needs no database.
       - name: Build smoke test
         env:
           NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_YXVkaXQtZHVtbXktMTIuY2xlcmsuYWNjb3VudHMuZGV2JA==
           CLERK_SECRET_KEY: sk_test_ci_placeholder
-        run: npx next build
+        run: npm run build

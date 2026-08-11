@@ -1,27 +1,49 @@
 'use client'
+import Loading from "@/components/Loading";
 import ProductDescription from "@/components/ProductDescription";
 import ProductDetails from "@/components/ProductDetails";
+import axios from "axios";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { useSelector } from "react-redux";
 
 export default function Product() {
 
     const { productId } = useParams();
-    const [product, setProduct] = useState();
-    const products = useSelector(state => state.product.list);
-
-    const fetchProduct = async () => {
-        const product = products.find((product) => product.id === productId);
-        setProduct(product);
-    }
+    const [product, setProduct] = useState(null);
+    // Without this the page cannot tell "still arriving" from "does not exist".
+    const [status, setStatus] = useState('loading');
 
     useEffect(() => {
-        if (products.length > 0) {
-            fetchProduct()
+        let cancelled = false
+
+        // By id, so the page does not wait on the whole catalogue.
+        const fetchProduct = async () => {
+            setStatus('loading')
+            try {
+                const { data } = await axios.get(`/api/products/${productId}`)
+                if (cancelled) return
+                setProduct(data.product)
+                setStatus('found')
+            } catch {
+                if (cancelled) return
+                setStatus('missing')
+            }
         }
+
+        fetchProduct()
         scrollTo(0, 0)
-    }, [productId,products]);
+        return () => { cancelled = true }
+    }, [productId]);
+
+    if (status === 'loading') return <Loading />
+
+    if (status === 'missing') {
+        return (
+            <div className="min-h-[70vh] mx-6 flex items-center justify-center text-slate-400">
+                <h1 className="text-2xl sm:text-4xl font-semibold">This product is no longer available</h1>
+            </div>
+        )
+    }
 
     return (
         <div className="mx-6">

@@ -19,6 +19,7 @@ export default function AdminCoupons() {
         forNewUser: false,
         forMember: false,
         isPublic: false,
+        maxRedemptions: '',
         expiresAt: new Date()
     })
 
@@ -90,6 +91,9 @@ export default function AdminCoupons() {
                 </div>
                 <input type="text" placeholder="Coupon Description" className="w-full mt-2 p-2 border border-slate-200 outline-slate-400 rounded-md"
                     name="description" value={newCoupon.description} onChange={handleChange} required
+                />
+                <input type="number" min={1} placeholder="Total redemption limit (optional)" className="w-full mt-2 p-2 border border-slate-200 outline-slate-400 rounded-md"
+                    name="maxRedemptions" value={newCoupon.maxRedemptions} onChange={handleChange}
                 />
 
                 <label>

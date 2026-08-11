@@ -1,5 +1,5 @@
 import { PlusIcon, SquarePenIcon, XIcon } from 'lucide-react';
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import AddressModal from './AddressModal';
 import { useDispatch, useSelector } from 'react-redux';
 import toast from 'react-hot-toast';
@@ -7,6 +7,8 @@ import { useRouter } from 'next/navigation';
 import {Protect, useAuth, useUser} from '@clerk/nextjs'
 import axios from 'axios';
 import { fetchCart } from '@/lib/features/cart/cartSlice';
+import { priceBasket } from '@/lib/checkoutPricing';
+import { fromCents, sumCents, toCents } from '@/lib/money';
 
 const OrderSummary = ({ totalPrice, items }) => {
 
@@ -24,6 +26,19 @@ const OrderSummary = ({ totalPrice, items }) => {
     const [showAddressModal, setShowAddressModal] = useState(false);
     const [couponCodeInput, setCouponCodeInput] = useState('');
     const [coupon, setCoupon] = useState('');
+    const [placing, setPlacing] = useState(false);
+
+    // The same function the server prices with. Shipping is shown separately.
+    const discountPercent = coupon ? coupon.discount : 0;
+    const subtotalCents = sumCents(items.map(item => toCents(item.price) * item.quantity));
+    const { totalCents: discountedCents } = priceBasket({
+        items, discountPercent, chargeShipping: false,
+    });
+    const discountCents = subtotalCents - discountedCents;
+
+    // Identifies the submission, not the click, so a double-click sends the same
+    // key twice. Rotated only after one succeeds.
+    const idempotencyKey = useRef(crypto.randomUUID());
 
     const handleCouponCode = async (event) => {
         event.preventDefault();
@@ -45,6 +60,8 @@ const OrderSummary = ({ totalPrice, items }) => {
 
     const handlePlaceOrder = async (e) => {
         e.preventDefault();
+        // Does nothing for a second tab, which is why the server dedupes too.
+        if(placing) return
         try {
             if(!user){
                 return toast('Please login to place an order')
@@ -52,6 +69,7 @@ const OrderSummary = ({ totalPrice, items }) => {
             if(!selectedAddress){
                 return toast('Please select an address')
             }
+            setPlacing(true)
             const token = await getToken();
 
             const orderData = {
@@ -64,19 +82,27 @@ const OrderSummary = ({ totalPrice, items }) => {
                 orderData.couponCode = coupon.code
             }
            const {data} = await axios.post('/api/orders', orderData, {
-            headers: { Authorization: `Bearer ${token}` }
+            headers: {
+                Authorization: `Bearer ${token}`,
+                'Idempotency-Key': idempotencyKey.current,
+            }
            })
+
+           // Spent: the next basket is a new submission.
+           idempotencyKey.current = crypto.randomUUID()
 
            if(paymentMethod === 'STRIPE'){
             window.location.href = data.session.url;
-           }else{
-            toast.success(data.message)
-            router.push('/orders')
-            dispatch(fetchCart({getToken}))
+            return
            }
+           toast.success(data.message)
+           router.push('/orders')
+           dispatch(fetchCart({getToken}))
 
         } catch (error) {
             toast.error(error?.response?.data?.error || error.message)
+        } finally {
+            setPlacing(false)
         }
 
         
@@ -131,7 +157,7 @@ const OrderSummary = ({ totalPrice, items }) => {
                     <div className='flex flex-col gap-1 font-medium text-right'>
                         <p>{currency}{totalPrice.toLocaleString()}</p>
                         <p><Protect plan={'plus'} fallback={`${currency}5`}>Free</Protect></p>
-                        {coupon && <p>{`-${currency}${(coupon.discount / 100 * totalPrice).toFixed(2)}`}</p>}
+                        {coupon && <p>{`-${currency}${fromCents(discountCents).toFixed(2)}`}</p>}
                     </div>
                 </div>
                 {
@@ -152,12 +178,12 @@ const OrderSummary = ({ totalPrice, items }) => {
             <div className='flex justify-between py-4'>
                 <p>Total:</p>
                 <p className='font-medium text-right'>
-                    <Protect plan={'plus'} fallback={`${currency}${coupon ? (totalPrice + 5 - (coupon.discount / 100 * totalPrice)).toFixed(2) : (totalPrice + 5).toLocaleString()}`}>  
-                    {currency}{coupon ? (totalPrice - (coupon.discount / 100 * totalPrice)).toFixed(2) : totalPrice.toLocaleString()}
+                    <Protect plan={'plus'} fallback={`${currency}${fromCents(priceBasket({ items, discountPercent, chargeShipping: true }).totalCents).toFixed(2)}`}>
+                    {currency}{fromCents(discountedCents).toFixed(2)}
                     </Protect>
                     </p>
             </div>
-            <button onClick={e => toast.promise(handlePlaceOrder(e), { loading: 'placing Order...' })} className='w-full bg-slate-700 text-white py-2.5 rounded hover:bg-slate-900 active:scale-95 transition-all'>Place Order</button>
+            <button onClick={e => toast.promise(handlePlaceOrder(e), { loading: 'placing Order...' })} disabled={placing} className='w-full bg-slate-700 text-white py-2.5 rounded hover:bg-slate-900 active:scale-95 transition-all disabled:opacity-60 disabled:cursor-not-allowed disabled:active:scale-100'>{placing ? 'Placing Order...' : 'Place Order'}</button>
 
             {showAddressModal && <AddressModal setShowAddressModal={setShowAddressModal} />}
 

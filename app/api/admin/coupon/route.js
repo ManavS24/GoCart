@@ -1,8 +1,10 @@
 import { inngest } from "@/inngest/client";
+import { parseCouponInput } from "@/lib/couponInput";
 import prisma from "@/lib/prisma";
 import authAdmin from "@/middlewares/authAdmin";
 import { getAuth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
+import { apiError } from "@/lib/apiError";
 
 
 export async function POST(request){
@@ -14,8 +16,12 @@ export async function POST(request){
             return NextResponse.json({ error: "not authorized" }, { status: 401 })
         }
 
-        const { coupon } = await request.json()
-        coupon.code = coupon.code.toUpperCase()
+        const body = await request.json()
+        const { coupon, error } = parseCouponInput(body?.coupon)
+
+        if (error) {
+            return NextResponse.json({ error }, { status: 400 })
+        }
 
         await prisma.coupon.create({data: coupon}).then(async (coupon) => {
             await inngest.send({
@@ -30,8 +36,7 @@ export async function POST(request){
         return NextResponse.json({message: "Coupon added successfully"})
 
     } catch (error) {
-        console.error(error)
-        return NextResponse.json({ error: error.code || error.message }, { status: 400 })
+        return apiError(error, 500, request)
     }
 }
 
@@ -50,8 +55,7 @@ export async function DELETE(request){
         await prisma.coupon.delete({where: { code }})
         return NextResponse.json({ message: 'Coupon deleted successfully' })
     } catch (error) {
-        console.error(error)
-        return NextResponse.json({ error: error.code || error.message }, { status: 400 })
+        return apiError(error, 500, request)
     }
 }
 
@@ -66,7 +70,6 @@ export async function GET(request){
         const coupons = await prisma.coupon.findMany({})
         return NextResponse.json({ coupons })
     } catch (error) {
-        console.error(error)
-        return NextResponse.json({ error: error.code || error.message }, { status: 400 })
+        return apiError(error, 500, request)
     }
 }

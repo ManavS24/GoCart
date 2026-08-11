@@ -25,7 +25,7 @@ const ProductDescription = ({ product }) => {
 
             {selectedTab === "Reviews" && (
                 <div className="flex flex-col gap-3 mt-14">
-                    {product.rating.map((item,index) => (
+                    {(product.rating ?? []).map((item,index) => (
                         <div key={index} className="flex gap-5 mb-10">
                             <Image src={item.user.image} alt="" className="size-10 rounded-full" width={100} height={100} />
                             <div>
