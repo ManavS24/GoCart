@@ -150,3 +150,55 @@ describe('OrderSummary', () => {
         await waitFor(() => expect(axiosPost).not.toHaveBeenCalled())
     })
 })
+
+// Nothing caught a render error before this: one throwing component replaced
+// the whole page. Clerk's <PricingTable/> does exactly that whenever billing
+// is not enabled on the instance, which is the default.
+describe('ErrorBoundary', () => {
+    const Boom = () => { throw new Error('billing is disabled') }
+
+    beforeEach(() => { vi.spyOn(console, 'error').mockImplementation(() => {}) })
+    afterEach(() => { vi.restoreAllMocks() })
+
+    it('renders children when nothing throws', async () => {
+        const { default: ErrorBoundary } = await import('@/components/ErrorBoundary')
+        render(<ErrorBoundary fallback={<p>fallback</p>}><p>content</p></ErrorBoundary>)
+        expect(screen.getByText('content')).toBeTruthy()
+    })
+
+    it('renders the fallback instead of propagating the throw', async () => {
+        const { default: ErrorBoundary } = await import('@/components/ErrorBoundary')
+        render(<ErrorBoundary fallback={<p>Plans are not available yet</p>}><Boom /></ErrorBoundary>)
+        expect(screen.getByText('Plans are not available yet')).toBeTruthy()
+    })
+
+    it('keeps the rest of the page mounted', async () => {
+        const { default: ErrorBoundary } = await import('@/components/ErrorBoundary')
+        render(
+            <div>
+                <nav>navbar</nav>
+                <ErrorBoundary fallback={<p>fallback</p>}><Boom /></ErrorBoundary>
+            </div>
+        )
+        // The point of the boundary: one widget fails, the page does not.
+        expect(screen.getByText('navbar')).toBeTruthy()
+        expect(screen.getByText('fallback')).toBeTruthy()
+    })
+
+    it('reports the failure as a structured, named event', async () => {
+        const { default: ErrorBoundary } = await import('@/components/ErrorBoundary')
+        render(<ErrorBoundary name='pricing-table' fallback={null}><Boom /></ErrorBoundary>)
+
+        const logged = console.error.mock.calls
+            .map(c => { try { return JSON.parse(c[0]) } catch { return null } })
+            .filter(Boolean)
+        expect(logged).toContainEqual(
+            expect.objectContaining({ event: 'ui_error', boundary: 'pricing-table', message: 'billing is disabled' })
+        )
+    })
+
+    it('renders nothing rather than throwing when given no fallback', async () => {
+        const { default: ErrorBoundary } = await import('@/components/ErrorBoundary')
+        expect(() => render(<ErrorBoundary><Boom /></ErrorBoundary>)).not.toThrow()
+    })
+})
