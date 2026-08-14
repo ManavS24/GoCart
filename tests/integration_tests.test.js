@@ -403,7 +403,7 @@ describe('integration: seller onboarding propagates state across endpoints', () 
         prisma.product.create.mockResolvedValue({ id: 'p1' })
         res = await read(await storeProduct.POST(form({
             name: 'Lamp', description: 'A lamp', mrp: '40', price: '29',
-            category: 'Decoration', images: [png()],
+            category: 'Home', images: [png()],
         })))
         expect(res.status).toBe(200)
         // Bound to the authSeller-resolved store, not to client input.

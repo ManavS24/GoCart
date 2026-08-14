@@ -18,6 +18,7 @@ Checklist:
 
 - [ ] `npm run seed` has run against the demo database
 - [ ] The seeded **Nova Tech** store is still pending — it is what the admin approves on camera
+- [ ] The demo notice at the top of every page is visible; it is worth pointing at rather than apologising for
 - [ ] Coupon `NEW20` exists (the site banner advertises it; a failed coupon on camera is fatal)
 - [ ] One product image saved locally, ready to drag in for the AI step
 - [ ] Razorpay keys are **test** keys (`rzp_test_…`)
@@ -29,7 +30,7 @@ Checklist:
 ### 1 — Shopper (0:00–1:15)
 
 1. Land on the storefront. Let the seeded catalogue speak for a beat.
-2. Search for `headphones`. Filtering is instant.
+2. Search for `headphones`. Two of the sixteen match, filtered server-side.
 3. Open a product. Point out ratings and that the seller is named — this is the
    multi-vendor part, worth saying out loud.
 4. Add to cart. Open the cart.
@@ -93,15 +94,16 @@ camera.
 
 ## Screenshots
 
-Eight, into `docs/screenshots/`:
+None are captured yet, and nothing links to them, so this is a shot list rather
+than a description of what exists. If you take them, `docs/screenshots/` is the
+place, and the README can then open with the first one.
 
 | File | Shot |
 | --- | --- |
-| `storefront.png` | Seeded catalogue — **this is the README hero** |
+| `storefront.png` | Seeded catalogue at a wide viewport |
 | `product.png` | Product detail with ratings |
 | `cart.png` | Cart with `NEW20` applied |
-| `checkout.png` | Cart with a coupon applied and the order summary |
-| `orders.png` | Order history showing Paid |
+| `orders.png` | Order history showing status and payment badges |
 | `seller-dashboard.png` | Earnings and ratings |
 | `ai-autofill.png` | Mid-autofill, fields populating |
 | `admin-approve.png` | Store approval queue |

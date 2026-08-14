@@ -55,20 +55,21 @@ const SELLERS = [
     { id: 'seed_user_greatstack', name: 'Great Stack', email: 'greatstack@example.com',
       store: { id: 'seed_store_greatstack', name: 'GreatStack', username: 'greatstack',
                logo: 'gs_logo.jpg', status: 'approved', isActive: true,
-               description: 'Coding and tech goodies, curated for builders. Keyboards, audio and desk gear that earn their place.',
-               address: '123 Maplewood Drive, Springfield, IL 62704, USA', contact: '+1 217 555 0142' } },
+               description: 'Coding and tech goodies, curated for builders. Audio, wearables and desk gear that earn their place.',
+               address: 'Sample address — demo store, Bengaluru, Karnataka', contact: '+91 90000 00001' } },
     { id: 'seed_user_happyshop', name: 'Happy Shop', email: 'happyshop@example.com',
       store: { id: 'seed_store_happyshop', name: 'Happy Shop', username: 'happyshop',
                logo: 'happy_store.webp', status: 'approved', isActive: true,
-               description: 'Everyday electronics without the markup. Fast shipping, honest prices, no gimmicks.',
-               address: '3rd Floor, New Building, 123 C Sector, New York, NY, USA', contact: '+1 646 555 0188' } },
+               description: 'Everyday electronics without the markup. Quick dispatch, honest prices, no gimmicks.',
+               address: 'Sample address — demo store, Pune, Maharashtra', contact: '+91 90000 00002' } },
     // Pending on purpose: gives the admin approval screen something to act on.
     { id: 'seed_user_novatech', name: 'Nova Tech', email: 'novatech@example.com',
       store: { id: 'seed_store_novatech', name: 'Nova Tech', username: 'novatech',
                logo: 'gs_logo.jpg', status: 'pending', isActive: false,
-               description: 'Audio specialists. Applying to sell studio monitors and reference headphones.',
-               address: '88 Harbour Street, Seattle, WA 98101, USA', contact: '+1 206 555 0119' } },
+               description: 'Audio specialists. Applying to sell reference headphones and portable speakers.',
+               address: 'Sample address — demo store, Hyderabad, Telangana', contact: '+91 90000 00003' } },
 ]
+
 
 const PRODUCTS = [
     ['Modern Table Lamp',          'Warm, dimmable desk lighting with a machined aluminium body. Three brightness levels and a USB-C passthrough so it earns its footprint.', 4000, 2900, 'Home',        'product_img1.png',  'seed_store_greatstack'],
