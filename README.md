@@ -39,7 +39,7 @@ platform-wide revenue with an orders-per-day chart.
 | Styling | Tailwind CSS 4 |
 | Database | Neon Postgres via Prisma 6 |
 | Auth & billing | Clerk |
-| Payments | Razorpay payment links + webhooks |
+| Payments | Razorpay payment links, confirmed by a polling sweep |
 | Media | ImageKit |
 | Background jobs | Inngest |
 | Client state | Redux Toolkit |
@@ -68,12 +68,11 @@ Two things that will otherwise cost you time:
 
 - **`ADMIN_EMAIL` must be the email you sign up with**, or `/admin` stays locked
   and you cannot approve your own seller store.
-- **`RAZORPAY_WEBHOOK_SECRET` comes later, and online checkout is refused
-  until it is set.** You choose it when creating the webhook, which needs a
-  deployed URL to point at. Until then `POST /api/orders` rejects `RAZORPAY`
-  with a 503 and cash on delivery carries the whole flow — deliberately,
-  because without the secret a payment would be captured by Razorpay and never
-  confirmed by the app.
+- **Online payment is confirmed by polling, not by a webhook.** There is no
+  webhook endpoint and no webhook secret: a scheduled sweep asks Razorpay every
+  five minutes which payment links were paid and marks the matching orders. So
+  a shopper can be charged up to five minutes before the order shows as paid,
+  and the API keys alone are enough to take payments — including locally.
 
 `npm run check` reports exactly which variables are missing or malformed and
 whether the database is reachable, so a bad credential fails there rather than
@@ -141,7 +140,7 @@ slices, `makeStore`, and the assets module.
 
 **`tests/integration_tests.test.js`** — only external boundaries are mocked;
 the real middleware and route handlers execute. Covers the seller onboarding
-flow, checkout and payment, webhook state transitions, the authorization matrix
+flow, checkout and payment, reconciliation, the authorization matrix
 across every endpoint, configuration loading, and failure propagation.
 
 Tests are written to find defects rather than inflate coverage, and were
@@ -155,7 +154,7 @@ the suite caught it. Highest-value cases:
   operation sequences.
 - Order pricing always comes from the database; quantities must be positive
   integers; addresses must belong to the buyer; coupons must be unexpired.
-- Razorpay webhook handling is idempotent and never deletes a paid order.
+- Payment reconciliation is idempotent and only ever moves an order to paid.
 
 ## Deployment
 
@@ -168,16 +167,14 @@ and the whole stack fits in free tiers.
    invalid Clerk key.
 3. Apply migrations **before** deploying, then deploy. The build no longer
    touches the database — see *Releases* below.
-4. In Razorpay, add a webhook to `https://<your-app>/api/razorpay` for
-   `payment_link.paid`, `payment_link.cancelled` and `payment_link.expired`,
-   set a secret of your choosing, then put the same value in
-   `RAZORPAY_WEBHOOK_SECRET` and redeploy. **Online checkout stays disabled
-   until this step completes**; the app refuses `RAZORPAY` orders rather than
-   taking a payment it cannot confirm.
+4. Nothing to configure at Razorpay: payments are confirmed by the scheduled
+   sweep, which uses the same API keys as checkout. Online orders are refused
+   with a 503 whenever those keys are absent, rather than taking a payment the
+   app cannot confirm.
 5. In Inngest, sync the app at `https://<your-app>/api/inngest`.
 6. Seed the production database once: `npm run seed`.
 7. Confirm the deployment is fully configured: `npm run check -- --production`,
-   which treats deferred variables such as `RAZORPAY_WEBHOOK_SECRET` as required.
+   which treats deferred variables as required.
 
 ## Troubleshooting
 
@@ -185,7 +182,7 @@ and the whole stack fits in free tiers.
 | --- | --- |
 | Build fails on `publishableKey` | Clerk env vars missing or malformed. Run `npm run check`. |
 | `/admin` says not authorized | `ADMIN_EMAIL` does not match your signed-in Clerk email. |
-| Orders never show as paid | Razorpay webhook not configured, or `RAZORPAY_WEBHOOK_SECRET` does not match the dashboard. |
+| Orders never show as paid | The reconciliation sweep is not running — check Inngest. It confirms payments every five minutes. |
 | `relation does not exist` | Migrations not applied — run `npx prisma migrate deploy`. |
 | Empty storefront | Database not seeded — run `npm run seed`. |
 | First request is slow | Neon auto-suspends when idle; the next request wakes it. |

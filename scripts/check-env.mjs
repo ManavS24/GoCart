@@ -45,7 +45,6 @@ const CHECKS = [
     ['INNGEST_EVENT_KEY', true, /.+/, 'from the Inngest dashboard'],
     ['INNGEST_SIGNING_KEY', true, /.+/, 'from the Inngest dashboard'],
     ['NEXT_PUBLIC_CURRENCY_SYMBOL', true, /.+/, 'e.g. $'],
-    ['RAZORPAY_WEBHOOK_SECRET', 'production', /.+/, 'required to take online payments; online checkout is refused without it'],
     ['OPENAI_API_KEY', false, /.+/, 'optional — only powers AI product autofill'],
     ['OPENAI_BASE_URL', false, /^https?:\/\//, 'optional'],
     ['OPENAI_MODEL', false, /.+/, 'optional'],
@@ -93,14 +92,6 @@ if (failed) {
 
 console.log(`\n  All required variables present${deferred ? ` (${deferred} optional/deferred skipped)` : ''}.`)
 
-// Say what a deferred webhook secret costs, rather than a quiet `skip`.
-if (!STRICT) {
-    const secret = env.RAZORPAY_WEBHOOK_SECRET ?? ''
-    if (!secret || PLACEHOLDER.test(secret)) {
-        console.log('  Note: RAZORPAY_WEBHOOK_SECRET is unset, so online checkout will be refused')
-        console.log('        (cash on delivery still works). Re-run with --production before release.')
-    }
-}
 
 // Credentials look right; confirm the database is actually reachable.
 try {

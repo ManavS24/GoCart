@@ -4,7 +4,6 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
-import { createHmac } from 'node:crypto'
 
 const prisma = {
     user: { findUnique: vi.fn() },
@@ -1681,37 +1680,5 @@ describe('online payment methods match the schema enum', () => {
         expect(isOnlineMethod(ACTIVE_ONLINE_METHOD)).toBe(true)
         expect(isOnlineMethod('COD')).toBe(false)
         expect(isOnlineMethod(undefined)).toBe(false)
-    })
-})
-
-describe('razorpay webhook signatures', () => {
-    const secret = 'whsec'
-    const body = '{"event":"payment_link.paid"}'
-    const digest = (b, s = secret) => createHmac('sha256', s).update(b).digest('hex')
-
-    it('accepts a digest of the exact bytes signed', async () => {
-        const { verifyWebhookSignature } = await import('@/lib/razorpaySignature')
-        expect(verifyWebhookSignature(body, digest(body), secret)).toBe(true)
-    })
-
-    it('rejects a body altered after signing', async () => {
-        const { verifyWebhookSignature } = await import('@/lib/razorpaySignature')
-        expect(verifyWebhookSignature(`${body} `, digest(body), secret)).toBe(false)
-    })
-
-    it('rejects a digest made with a different secret', async () => {
-        const { verifyWebhookSignature } = await import('@/lib/razorpaySignature')
-        expect(verifyWebhookSignature(body, digest(body, 'other'), secret)).toBe(false)
-    })
-
-    it('returns false rather than throwing on a missing or malformed signature', async () => {
-        const { verifyWebhookSignature } = await import('@/lib/razorpaySignature')
-        // timingSafeEqual throws on a length mismatch, so a short signature
-        // must be answered before it is reached.
-        for (const sig of [undefined, null, '', 'abc', digest(body).slice(0, -1)]) {
-            expect(verifyWebhookSignature(body, sig, secret)).toBe(false)
-        }
-        expect(verifyWebhookSignature(body, digest(body), undefined)).toBe(false)
-        expect(verifyWebhookSignature(undefined, digest(body), secret)).toBe(false)
     })
 })

@@ -10,8 +10,8 @@ the git history. Extracted from the production-readiness audit (commit
 ## 1. Blocking — before any production traffic
 
 - [ ] **Wire an error tracker and define the alerts in §5.** The events exist and
-  are countable — `payments_reconciled`, `webhook_duplicate`,
-  `card_checkout_refused`, `rate_limited`, `api_error` with a request id — but
+  are countable — `payments_reconciled`, `card_checkout_refused`,
+  `rate_limited`, `api_error` with a request id — but
   nothing watches them. Reconciliation now *detects* a payment taken without an
   order; nobody is told. This is the highest-value item left.
 
@@ -27,7 +27,6 @@ the git history. Extracted from the production-readiness audit (commit
 
 - [ ] **Run `npm run check -- --production`.** The gate is opt-in and promotes
   deferred variables to required, so a deploy cannot go out half-configured.
-  Presence of `RAZORPAY_WEBHOOK_SECRET` is checked; correctness cannot be.
 
 - [ ] **One-off data fix**, after migrating:
   `UPDATE "Store" SET "isActive" = false WHERE status = 'rejected';` — for stores
@@ -45,7 +44,6 @@ The code side of every one is already in place.
 | Alerting, error tracking, metrics | See §1 | **Yes** |
 | Shared rate limiter | See §1 | **Yes** |
 | Promote the CSP | Load the deployed app against the real Clerk tenant, confirm no violations across sign-in, checkout and image loading, then rename `Content-Security-Policy-Report-Only` to `Content-Security-Policy`. It defends nothing until then | No |
-| Stale webhook secret | Presence is checked, correctness is not. Rely on reconciliation to catch what a wrong secret loses | No |
 | Online option shown when payment is unavailable | The server refuses with a clear 503. Hiding the option needs the client to know a server-side variable — a second source of truth that can drift | No |
 | Clerk→Inngest integration | Provisioning no longer depends on it; `clerk/user.updated` and `clerk/user.deleted` still do, so without it profile data goes stale and deleted accounts keep their rows. Verify in the Clerk dashboard | No |
 | Admin identity | Still `ADMIN_EMAIL`. Moving it to Clerk private metadata or a roles table needs tenant configuration | No |
@@ -72,8 +70,13 @@ far as it usefully could.
   latent hazard rather than an active defect — but any future arithmetic that
   bypasses `lib/money.js` reintroduces the class.
 
-- [ ] **Write an on-call runbook** for: payment taken but order unpaid; webhook
-  4xx spike; database unreachable.
+- [ ] **Write an on-call runbook** for: payment taken but order unpaid; the
+  reconciliation sweep stalled; database unreachable.
+
+- [ ] **Consider adding the webhook back.** Confirmation is currently a
+  five-minute poll, which is the shopper's wait to see a paid order and the
+  window in which a cart stays full after payment. The ledger table and the
+  idempotent update it needs are still in place, so this is additive.
 
 - [ ] **Confirm Neon backups / PITR are enabled** and rehearse a restore.
 
@@ -89,8 +92,8 @@ Nothing below was closable from the repository. Each entry states the check.
 | Seed script | `npm run seed` twice against a scratch branch, to confirm idempotency and that ImageKit `overwriteFile` behaves as documented |
 | `npm run check` database half | Run with real credentials; confirm it fails correctly against a suspended Neon project |
 | Admin admission | Confirm the real admin account *is* admitted. Authorization resolves the primary address by id and requires `verification.status === 'verified'`, so a wrong model of the Clerk shape now locks an admin out rather than letting an attacker in |
-| Razorpay payment link creation | The request and response shape are written against the SDK's surface and Razorpay's documentation, never against a live call. Create one order in test mode and confirm the link opens, the amount is right, and `notes` survive onto the webhook |
-| Real Razorpay webhook delivery | Point a Razorpay test webhook at a tunnelled `/api/razorpay`, drive a full checkout, then force a mid-handler failure and confirm the retry is handled |
+| Razorpay payment link creation | The request and response shape are written against the SDK's surface and Razorpay's documentation, never against a live call. Create one order in test mode and confirm the link opens, the amount is right, and `notes` come back on `paymentLink.all` |
+| Reconciliation against live data | Pay a test link, then confirm the next sweep marks the order paid and clears the cart. This is the only path that confirms a payment |
 | Clerk → Inngest user sync | Confirm the integration exists, then measure the lag between sign-up and the `User` row appearing |
 | Inngest function registration | Sync at `/api/inngest`, confirm all six functions register, and verify `deleteCouponOnExpiry`'s `sleepUntil` fires |
 | Clerk `plus` plan | Verify free shipping and member-only coupons resolve for both plan states, and that `has` is present on every `getAuth` result |
@@ -105,11 +108,11 @@ Nothing below was closable from the repository. Each entry states the check.
 
 **Alert (page someone):**
 
-- `POST /api/razorpay` non-2xx rate > 0 over 5 minutes.
-- Any webhook response with `duplicate: true` **not** preceded by successful
-  processing of that event id — direct detection of a burned ledger entry.
-- Orders with `paymentMethod = 'RAZORPAY'` and `isPaid = false` older than 1
-  hour, count > 0.
+- **No `payments_reconciled` event for 15 minutes.** The sweep is the only
+  thing that confirms a payment, so a stalled sweep means money is being taken
+  and no order is being marked paid. This is the single most important alert.
+- Orders with `paymentMethod = 'RAZORPAY'` and `isPaid = false` older than 30
+  minutes, count > 0.
 - Razorpay captured-payment count vs. application paid-order count, hourly —
   the authoritative reconciliation.
 - Database connection errors, any occurrence.
@@ -117,8 +120,8 @@ Nothing below was closable from the repository. Each entry states the check.
 
 **Dashboard (review daily):**
 
-- Checkout funnel: `POST /api/orders` → payment link created →
-  `payment_link.paid`. A widening gap is the payment-loss symptom.
+- Checkout funnel: `POST /api/orders` → payment link created → order marked
+  paid by the sweep. A widening gap is the payment-loss symptom.
 - p95 latency on `/api/products`, `/api/orders`, `/api/store/dashboard`.
 - Neon connection count and cold-start frequency.
 - Inngest function success rate.
@@ -130,8 +133,8 @@ Nothing below was closable from the repository. Each entry states the check.
 **Verify in the first hour after deploy:**
 
 - `/api/health` returns healthy with database connectivity.
-- One end-to-end COD order and one end-to-end online order, confirmed paid via
-  the webhook.
+- One end-to-end COD order and one end-to-end online order, confirmed paid by
+  the reconciliation sweep.
 - Admin console reachable by the `ADMIN_EMAIL` account and refused for a second
   test account.
 - A new sign-up produces a `User` row, then completes a checkout.

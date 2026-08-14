@@ -69,11 +69,12 @@ const RECONCILE_WINDOW_HOURS = 24
 // Razorpay returns at most this many links per call.
 const RECONCILE_PAGE_SIZE = 100
 
-// Repairs payments Razorpay took that this application never recorded. Nothing
-// in the request path can detect that, because the request path is what failed.
+// The only thing that marks an online order paid: there is no webhook, so
+// nothing pushes the outcome and the application has to go and ask. The
+// interval is therefore how long a shopper waits to see a paid order.
 export const reconcileRazorpayPayments = inngest.createFunction(
     { id: 'reconcile-razorpay-payments' },
-    { cron: '15 * * * *' },
+    { cron: '*/5 * * * *' },
     async ({ step }) => {
         const since = Math.floor(Date.now() / 1000) - RECONCILE_WINDOW_HOURS * 3600
 
@@ -101,7 +102,7 @@ export const reconcileRazorpayPayments = inngest.createFunction(
 
                     const orderIds = notes.orderIds.split(',')
 
-                    // Only unpaid rows change, so racing the webhook is harmless.
+                    // Only unpaid rows change, so overlapping sweeps are harmless.
                     const { count } = await prisma.order.updateMany({
                         where: { id: { in: orderIds }, isPaid: false },
                         data: { isPaid: true },
@@ -119,15 +120,13 @@ export const reconcileRazorpayPayments = inngest.createFunction(
             return results
         })
 
-        if (repaired.length > 0) {
-            // Should never be routine: each is a payment the webhook missed.
-            logger.error('payments_reconciled', {
-                repairedCount: repaired.length,
-                orders: repaired.flatMap(r => r.orderIds),
-            })
-        } else {
-            logger.info('payments_reconciled', { repairedCount: 0 })
-        }
+        // Routine, not exceptional: with no webhook this sweep is how every
+        // online payment is confirmed, so it must not page anyone. What is
+        // worth alerting on is the sweep failing or not running at all.
+        logger.info('payments_reconciled', {
+            repairedCount: repaired.length,
+            orders: repaired.flatMap(r => r.orderIds),
+        })
 
         return { repaired: repaired.length }
     }

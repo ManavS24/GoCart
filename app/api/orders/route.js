@@ -72,10 +72,10 @@ export async function POST(request){
             return NextResponse.json({ error: "invalid payment method" }, { status: 400 });
         }
 
-        // Never start a payment that cannot be confirmed: without the secret
-        // /api/razorpay rejects every delivery and the charge is never recorded.
-        if(isOnlineMethod(paymentMethod) && !process.env.RAZORPAY_WEBHOOK_SECRET){
-            logger.error('card_checkout_refused', { reason: 'RAZORPAY_WEBHOOK_SECRET is not set' })
+        // Never start a payment that cannot be confirmed: the reconciliation
+        // sweep is what marks an order paid, and it authenticates with these.
+        if(isOnlineMethod(paymentMethod) && !(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET)){
+            logger.error('card_checkout_refused', { reason: 'Razorpay API keys are not set' })
             return NextResponse.json(
                 { error: "Card payment is temporarily unavailable. Please choose cash on delivery." },
                 { status: 503 }
@@ -274,8 +274,8 @@ export async function POST(request){
                     expire_by: Math.floor(Date.now() / 1000) + 30 * 60,
                     callback_url: `${origin}/loading?nextUrl=orders`,
                     callback_method: 'get',
-                    // Read straight back off the webhook payload, so confirming
-                    // a payment needs no second call to Razorpay.
+                    // How the reconciliation sweep maps a paid link back to
+                    // the orders it was raised for.
                     notes: {
                         orderIds: orderIds.join(','),
                         userId,

@@ -1,6 +1,5 @@
 // Modules wired together. Only external boundaries are mocked (Prisma, Clerk,
 // Razorpay, ImageKit, OpenAI, Inngest); real middleware and route handlers run.
-import { createHmac } from 'crypto'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const prisma = {
@@ -71,7 +70,6 @@ const addressApi = await import('@/app/api/address/route')
 const couponApi = await import('@/app/api/coupon/route')
 const ratingApi = await import('@/app/api/rating/route')
 const productsApi = await import('@/app/api/products/route')
-const razorpayApi = await import('@/app/api/razorpay/route')
 const storeCreate = await import('@/app/api/store/create/route')
 const storeProduct = await import('@/app/api/store/product/route')
 const storeDashboard = await import('@/app/api/store/dashboard/route')
@@ -109,20 +107,6 @@ const routeFiles = (dir = API_ROOT, route = '/api', out = []) => {
 }
 
 const ORIGIN = 'https://shop.test'
-const WEBHOOK_SECRET = 'rzp_webhook_secret'
-
-// Signed the way Razorpay signs, so the handler's real HMAC check runs rather
-// than a stubbed one: a body and a signature that disagree must be rejected.
-const signed = (payload, { secret = WEBHOOK_SECRET, eventId = 'evt_1' } = {}) => {
-    const raw = JSON.stringify(payload)
-    return {
-        text: async () => raw,
-        headers: new Headers({
-            'x-razorpay-signature': createHmac('sha256', secret).update(raw).digest('hex'),
-            'x-razorpay-event-id': eventId,
-        }),
-    }
-}
 const json = (body) => ({
     json: async () => body,
     headers: new Headers({ origin: ORIGIN }),
@@ -195,9 +179,8 @@ beforeEach(() => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     vi.spyOn(console, 'log').mockImplementation(() => {})
     process.env.ADMIN_EMAIL = 'admin@example.com'
-    // A correctly configured deployment has this; online checkout is refused
-    // without it, so tests for that case delete it explicitly.
-    process.env.RAZORPAY_WEBHOOK_SECRET = WEBHOOK_SECRET
+    // A correctly configured deployment has these; online checkout is refused
+    // without them, so tests for that case delete them explicitly.
     process.env.RAZORPAY_KEY_ID = 'rzp_test_x'
     process.env.RAZORPAY_KEY_SECRET = 'secret'
 })
@@ -241,7 +224,6 @@ describe('integration: anonymous callers are refused everywhere', () => {
         '/api/store/orders': storeOrders,
         '/api/store/product': storeProduct,
         '/api/store/stock-toggle': storeStock,
-        '/api/razorpay': razorpayApi,
     }
 
     // Endpoints that are meant to answer an anonymous caller, each with the
@@ -250,7 +232,6 @@ describe('integration: anonymous callers are refused everywhere', () => {
         '/api/products GET': 'the storefront catalogue',
         '/api/products/[productId] GET': 'a public product page',
         '/api/store/data GET': 'a public store page',
-        '/api/razorpay POST': 'authenticated by the Razorpay webhook signature',
         '/api/health GET': 'a liveness probe, which must answer before anyone is signed in',
     }
     // Every guarded endpoint now authenticates before reading its body, so there
@@ -262,7 +243,7 @@ describe('integration: anonymous callers are refused everywhere', () => {
         json: async () => ({}),
         text: async () => '{}',
         formData: async () => new FormData(),
-        headers: new Headers({ origin: ORIGIN, 'x-razorpay-signature': 'sig' }),
+        headers: new Headers({ origin: ORIGIN }),
         nextUrl: new URL(u),
         url: u,
     })
@@ -607,175 +588,6 @@ describe('integration: checkout flow', () => {
             headers: new Headers(), nextUrl: new URL(ORIGIN), url: ORIGIN,
         })
         expect(razorpayCreateLink.mock.calls[0][0].callback_url).toBe(`${ORIGIN}/loading?nextUrl=orders`)
-    })
-})
-
-describe('integration: razorpay webhook completes the order lifecycle', () => {
-    const NOTES = { orderIds: 'o1,o2', userId: 'u1', appId: 'gocart' }
-    const evt = (event, notes = NOTES) => ({
-        event,
-        payload: { payment_link: { entity: { id: 'plink_1', notes } } },
-    })
-    const hook = (event = 'payment_link.paid', opts) => signed(evt(event), opts)
-
-    beforeEach(() => {
-        prisma.processedWebhookEvent.create.mockResolvedValue({})
-    })
-
-    it('rejects an unverifiable signature before any write', async () => {
-        const { status } = await read(await razorpayApi.POST(signed(evt('payment_link.paid'), { secret: 'wrong' })))
-        expect(status).toBe(400)
-        expect(prisma.processedWebhookEvent.create).not.toHaveBeenCalled()
-    })
-
-    it('rejects a body altered after signing', async () => {
-        const req = signed(evt('payment_link.paid'))
-        // Same signature, different bytes: the tamper the HMAC exists to catch.
-        const tampered = { ...req, text: async () => JSON.stringify(evt('payment_link.paid', { ...NOTES, orderIds: 'attacker' })) }
-        expect((await read(await razorpayApi.POST(tampered))).status).toBe(400)
-        expect(prisma.order.updateMany).not.toHaveBeenCalled()
-    })
-
-    it('rejects a request carrying no signature at all', async () => {
-        const req = { text: async () => JSON.stringify(evt('payment_link.paid')), headers: new Headers() }
-        expect((await read(await razorpayApi.POST(req))).status).toBe(400)
-    })
-
-    it('marks orders paid and clears the cart on success', async () => {
-        const { status } = await read(await razorpayApi.POST(hook()))
-        expect(status).toBe(200)
-        expect(prisma.order.updateMany).toHaveBeenCalledWith({ where: { id: { in: ['o1', 'o2'] } }, data: { isPaid: true } })
-        // updateMany: clearing the cart of a user row that does not exist yet
-        // must not abort the transaction that confirms the payment.
-        expect(prisma.user.updateMany).toHaveBeenCalledWith({ where: { id: 'u1' }, data: { cart: {} } })
-    })
-
-    it('deletes only unpaid orders when the link is cancelled or expires', async () => {
-        for (const event of ['payment_link.cancelled', 'payment_link.expired']) {
-            vi.clearAllMocks()
-            prisma.processedWebhookEvent.create.mockResolvedValue({})
-            await razorpayApi.POST(hook(event))
-            expect(prisma.order.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ['o1', 'o2'] }, isPaid: false } })
-            expect(prisma.order.updateMany).not.toHaveBeenCalled()
-        }
-    })
-
-    it('claims the event id before mutating anything', async () => {
-        await razorpayApi.POST(hook())
-        expect(prisma.processedWebhookEvent.create.mock.invocationCallOrder[0])
-            .toBeLessThan(prisma.order.updateMany.mock.invocationCallOrder[0])
-    })
-
-    it('keys the ledger on the header event id, so a redelivery collides', async () => {
-        await razorpayApi.POST(hook('payment_link.paid', { eventId: 'evt_abc' }))
-        expect(prisma.processedWebhookEvent.create)
-            .toHaveBeenCalledWith({ data: { id: 'evt_abc', type: 'payment_link.paid' } })
-    })
-
-    it('falls back to a deterministic id when the header is absent', async () => {
-        const raw = JSON.stringify(evt('payment_link.paid'))
-        const req = {
-            text: async () => raw,
-            headers: new Headers({ 'x-razorpay-signature': createHmac('sha256', WEBHOOK_SECRET).update(raw).digest('hex') }),
-        }
-        expect((await read(await razorpayApi.POST(req))).status).toBe(200)
-        // Derived from the entity, so the same delivery twice still collides.
-        expect(prisma.processedWebhookEvent.create)
-            .toHaveBeenCalledWith({ data: { id: 'payment_link.paid:plink_1', type: 'payment_link.paid' } })
-    })
-
-    it('ignores a replayed delivery without touching orders', async () => {
-        prisma.processedWebhookEvent.create.mockRejectedValue(Object.assign(new Error('dup'), { code: 'P2002' }))
-        // A *completed* claim is what makes this a genuine replay.
-        prisma.processedWebhookEvent.findUnique.mockResolvedValue({ id: 'evt_1', completedAt: new Date() })
-        const { status, body } = await read(await razorpayApi.POST(hook('payment_link.cancelled')))
-        expect(status).toBe(200)
-        expect(body.duplicate).toBe(true)
-        expect(prisma.order.deleteMany).not.toHaveBeenCalled()
-        expect(prisma.$transaction).not.toHaveBeenCalled()
-    })
-
-    it('surfaces a non-duplicate ledger failure', async () => {
-        prisma.processedWebhookEvent.create.mockRejectedValue(Object.assign(new Error('down'), { code: 'P1001' }))
-        const failed = await read(await razorpayApi.POST(hook()))
-        expect(failed.status).toBe(500)
-        expect(failed.body.error).not.toMatch(/P1001|down/)
-        expect(prisma.order.updateMany).not.toHaveBeenCalled()
-    })
-
-    it('ignores links belonging to another app', async () => {
-        await razorpayApi.POST(signed(evt('payment_link.paid', { ...NOTES, appId: 'other' })))
-        expect(prisma.order.updateMany).not.toHaveBeenCalled()
-    })
-
-    // The claim used to commit before the work, so a delivery that failed
-    // partway burned the event id and the retry was refused as a duplicate.
-    it('reprocesses a retry after the first delivery failed, and the order ends up paid', async () => {
-        // Delivery 1: the claim lands, then the transaction rolls back.
-        prisma.$transaction.mockRejectedValueOnce(new Error('deadlock detected'))
-        expect((await read(await razorpayApi.POST(hook()))).status).toBe(500)
-        // Nothing marked the claim complete, so it cannot suppress the retry.
-        expect(prisma.processedWebhookEvent.update).not.toHaveBeenCalled()
-
-        // Delivery 2: Razorpay retries the same event id.
-        prisma.processedWebhookEvent.create.mockRejectedValue(Object.assign(new Error('dup'), { code: 'P2002' }))
-        prisma.processedWebhookEvent.findUnique.mockResolvedValue({ id: 'evt_1', completedAt: null })
-
-        const { status, body } = await read(await razorpayApi.POST(hook()))
-        expect(status).toBe(200)
-        expect(body.duplicate).toBeUndefined()
-        expect(prisma.order.updateMany).toHaveBeenCalledWith({ where: { id: { in: ['o1', 'o2'] } }, data: { isPaid: true } })
-        expect(prisma.processedWebhookEvent.update)
-            .toHaveBeenCalledWith({ where: { id: 'evt_1' }, data: { completedAt: expect.any(Date) } })
-    })
-
-    it('completes the claim in the same transaction as the mutations', async () => {
-        await razorpayApi.POST(hook())
-
-        expect(prisma.$transaction).toHaveBeenCalledTimes(1)
-        // Both issued before the callback returns, so neither commits without
-        // the other. A mark moved after the transaction would order after this.
-        const commit = txCommit.mock.invocationCallOrder[0]
-        expect(prisma.order.updateMany.mock.invocationCallOrder[0]).toBeLessThan(commit)
-        expect(prisma.processedWebhookEvent.update.mock.invocationCallOrder[0]).toBeLessThan(commit)
-    })
-
-    it('leaves the claim incomplete when the transaction rolls back', async () => {
-        prisma.$transaction.mockRejectedValueOnce(new Error('deadlock detected'))
-
-        expect((await read(await razorpayApi.POST(hook()))).status).toBe(500)
-        // The rollback took the completion mark with it, so the next delivery
-        // reprocesses rather than short-circuiting.
-        expect(prisma.processedWebhookEvent.update).not.toHaveBeenCalled()
-    })
-
-    it('reprocesses when the claim row cannot be read back', async () => {
-        // Defensive: a vanished row must fall through to reprocessing, never to
-        // silently dropping the event.
-        prisma.processedWebhookEvent.create.mockRejectedValue(Object.assign(new Error('dup'), { code: 'P2002' }))
-        prisma.processedWebhookEvent.findUnique.mockResolvedValue(null)
-        expect((await read(await razorpayApi.POST(hook()))).status).toBe(200)
-        expect(prisma.order.updateMany).toHaveBeenCalled()
-    })
-
-    it('acknowledges an event type it does not act on', async () => {
-        const { status } = await read(await razorpayApi.POST(hook('payment_link.partially_paid')))
-        expect(status).toBe(200)
-        expect(prisma.order.updateMany).not.toHaveBeenCalled()
-        expect(prisma.order.deleteMany).not.toHaveBeenCalled()
-    })
-
-    it('touches no order when the payload carries no usable notes', async () => {
-        // Built as whole entities, so the absent-notes case really is absent
-        // rather than defaulted back to a valid one.
-        const entities = [{ notes: { appId: 'gocart' } }, { notes: {} }, {}]
-        for (const entity of entities) {
-            vi.clearAllMocks()
-            prisma.processedWebhookEvent.create.mockResolvedValue({})
-            const payload = { event: 'payment_link.paid', payload: { payment_link: { entity: { id: 'plink_1', ...entity } } } }
-            expect((await read(await razorpayApi.POST(signed(payload)))).status).toBe(200)
-            expect(prisma.order.updateMany).not.toHaveBeenCalled()
-        }
     })
 })
 
@@ -2242,34 +2054,8 @@ describe('integration: the application can be observed', () => {
             expect(a.body.errorId).not.toBe(b.body.errorId)
         })
 
-        it('records a payment as an event that can be counted', async () => {
-            // §13 asks for Razorpay's captured-payment count to be reconciled
-            // against the application's. This is the application's side of it.
-            prisma.processedWebhookEvent.create.mockResolvedValue({})
-
-            await razorpayApi.POST(signed({
-                event: 'payment_link.paid',
-                payload: { payment_link: { entity: { id: 'plink_9', notes: { orderIds: 'o1,o2', userId: 'u1', appId: 'gocart' } } } },
-            }, { eventId: 'evt_9' }))
-
-            const processed = lines(console.log).find(l => l.event === 'webhook_processed')
-            expect(processed).toMatchObject({ eventId: 'evt_9', markedPaid: true, orderIds: ['o1', 'o2'] })
-        })
-
-        it('records a suppressed duplicate delivery', async () => {
-            prisma.processedWebhookEvent.create.mockRejectedValue(Object.assign(new Error('dup'), { code: 'P2002' }))
-            prisma.processedWebhookEvent.findUnique.mockResolvedValue({ id: 'evt_9', completedAt: new Date() })
-
-            await razorpayApi.POST(signed({
-                event: 'payment_link.paid',
-                payload: { payment_link: { entity: { id: 'plink_9', notes: { orderIds: 'o1,o2', userId: 'u1', appId: 'gocart' } } } },
-            }, { eventId: 'evt_9' }))
-
-            expect(lines(console.log).some(l => l.event === 'webhook_duplicate')).toBe(true)
-        })
-
         it('records a refused card checkout as an error, not a silent 503', async () => {
-            delete process.env.RAZORPAY_WEBHOOK_SECRET
+            delete process.env.RAZORPAY_KEY_SECRET
             asShopper('u1')
             await orders.POST(json({ addressId: 'a1', items: [{ id: 'p1', quantity: 1 }], paymentMethod: 'RAZORPAY' }))
             expect(lines(console.error).some(l => l.event === 'card_checkout_refused')).toBe(true)
@@ -2391,11 +2177,12 @@ describe('integration: card checkout is refused when it cannot be confirmed', ()
         prisma.order.create.mockResolvedValue({ id: 'o1' })
         prisma.user.updateMany.mockResolvedValue({ count: 1 })
         razorpayCreateLink.mockResolvedValue({ id: 'plink_1', short_url: 'https://rzp.test/i/1' })
-        process.env.RAZORPAY_WEBHOOK_SECRET = WEBHOOK_SECRET
+        process.env.RAZORPAY_KEY_ID = 'rzp_test_x'
+        process.env.RAZORPAY_KEY_SECRET = 'secret'
     })
 
-    it('refuses an online order when the webhook secret is unset', async () => {
-        delete process.env.RAZORPAY_WEBHOOK_SECRET
+    it('refuses an online order when the API keys are unset', async () => {
+        delete process.env.RAZORPAY_KEY_SECRET
         const { status, body: res } = await read(await orders.POST(json(body())))
         expect(status).toBe(503)
         expect(res.error).toMatch(/temporarily unavailable/i)
@@ -2403,7 +2190,7 @@ describe('integration: card checkout is refused when it cannot be confirmed', ()
 
     it('creates no order and calls the provider not at all when refusing', async () => {
         // The point is to take no money and leave no trace, not to fail late.
-        delete process.env.RAZORPAY_WEBHOOK_SECRET
+        delete process.env.RAZORPAY_KEY_SECRET
         await orders.POST(json(body()))
         expect(prisma.order.create).not.toHaveBeenCalled()
         expect(prisma.$transaction).not.toHaveBeenCalled()
@@ -2412,20 +2199,20 @@ describe('integration: card checkout is refused when it cannot be confirmed', ()
 
     it('still accepts cash on delivery while card payment is unavailable', async () => {
         // Refusing cards must not take the whole storefront down with it.
-        delete process.env.RAZORPAY_WEBHOOK_SECRET
+        delete process.env.RAZORPAY_KEY_SECRET
         const { status, body: res } = await read(await orders.POST(json(body({ paymentMethod: 'COD' }))))
         expect(status).toBe(200)
         expect(res.message).toBe('Orders Placed Successfully')
     })
 
-    it('allows an online order once the secret is configured', async () => {
+    it('allows an online order once the keys are configured', async () => {
         const { status, body: res } = await read(await orders.POST(json(body())))
         expect(status).toBe(200)
         expect(res.session.url).toBe('https://rzp.test/i/1')
     })
 
-    it('refuses an empty-string secret, not just an absent one', async () => {
-        process.env.RAZORPAY_WEBHOOK_SECRET = ''
+    it('refuses an empty-string key, not just an absent one', async () => {
+        process.env.RAZORPAY_KEY_SECRET = ''
         expect((await read(await orders.POST(json(body())))).status).toBe(503)
     })
 })
@@ -3035,5 +2822,41 @@ describe('integration: database failures degrade safely', () => {
         })))
         expect(status).toBe(500)
         expect(prisma.user.update).not.toHaveBeenCalled()
+    })
+})
+
+// Reconciliation is the only thing that confirms an online payment, so what it
+// logs is what the §5 alerts are built on.
+describe('integration: reconciliation reports itself as routine work', () => {
+    const step = { run: async (_name, fn) => fn() }
+    const lines = (spy) => spy.mock.calls.map(c => { try { return JSON.parse(c[0]) } catch { return null } }).filter(Boolean)
+
+    beforeEach(() => {
+        process.env.RAZORPAY_KEY_ID = 'rzp_test_x'
+        process.env.RAZORPAY_KEY_SECRET = 'secret'
+        razorpayListLinks.mockResolvedValue({
+            payment_links: [{
+                id: 'plink_1', status: 'paid',
+                notes: { orderIds: 'o1', userId: 'u1', appId: 'gocart' },
+            }],
+        })
+    })
+
+    it('records a confirmed payment at info, not error', async () => {
+        prisma.order.updateMany.mockResolvedValue({ count: 1 })
+        await jobs.reconcileRazorpayPayments.handler({ step })
+
+        // Every successful payment passes through here now. Logging it as an
+        // error would page someone on each one and bury the real failures.
+        expect(lines(console.error).some(l => l.event === 'payments_reconciled')).toBe(false)
+        expect(lines(console.log).find(l => l.event === 'payments_reconciled'))
+            .toMatchObject({ repairedCount: 1, orders: ['o1'] })
+    })
+
+    it('still reports a quiet sweep', async () => {
+        prisma.order.updateMany.mockResolvedValue({ count: 0 })
+        await jobs.reconcileRazorpayPayments.handler({ step })
+        expect(lines(console.log).find(l => l.event === 'payments_reconciled'))
+            .toMatchObject({ repairedCount: 0 })
     })
 })
