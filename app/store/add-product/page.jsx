@@ -46,8 +46,6 @@ export default function StoreAddProduct() {
                         {
                             loading: "Analyzing image with AI...",
                             success: (res) => {
-                                console.log(res);
-                                
                                 const data = res.data
                                 if (data.name && data.description) {
                                     setProductInfo(prev => ({
@@ -117,7 +115,7 @@ export default function StoreAddProduct() {
                             height={300}
                             className='h-15 w-auto border border-slate-200 rounded cursor-pointer'
                             src={images[key] ? URL.createObjectURL(images[key]) : assets.upload_area}
-                            alt=""
+                            alt={images[key] ? `Product image ${key}` : `Upload product image ${key}`}
                         />
                         <input
                             type="file"

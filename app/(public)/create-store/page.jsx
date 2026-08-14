@@ -42,14 +42,14 @@ export default function CreateStore() {
                 setAlreadySubmitted(true)
                 switch (data.status) {
                     case "approved":
-                        setMessage("Your store has been approved, you can now add products to your store from dashboard")
+                        setMessage("Your store has been approved. Redirecting you to your dashboard, where you can add products.")
                         setTimeout(()=>router.push("/store"), 5000)
                         break;
                     case "rejected":
-                        setMessage("Your store request has been rejected, contact the admin for more details")
+                        setMessage("Your store application was not approved. Contact the site owner if you think this is a mistake.")
                         break;
                     case "pending":
-                        setMessage("Your store request is pending, please wait for admin to approve your store")
+                        setMessage("Your store application has been received and is waiting to be reviewed.")
                         break;
                 
                     default:
@@ -115,27 +115,27 @@ export default function CreateStore() {
 
                         <label className="mt-10 cursor-pointer">
                             Store Logo
-                            <Image src={storeInfo.image ? URL.createObjectURL(storeInfo.image) : assets.upload_area} className="rounded-lg mt-2 h-16 w-auto" alt="" width={150} height={100} />
+                            <Image src={storeInfo.image ? URL.createObjectURL(storeInfo.image) : assets.upload_area} className="rounded-lg mt-2 h-16 w-auto" alt={storeInfo.image ? "Selected store logo" : "Upload a store logo"} width={150} height={100} />
                             <input type="file" accept="image/*" onChange={(e) => setStoreInfo({ ...storeInfo, image: e.target.files[0] })} hidden />
                         </label>
 
                         <p>Username</p>
-                        <input name="username" onChange={onChangeHandler} value={storeInfo.username} type="text" placeholder="Enter your store username" className="border border-slate-300 outline-slate-400 w-full max-w-lg p-2 rounded" />
+                        <input name="username" onChange={onChangeHandler} value={storeInfo.username} required type="text" placeholder="Enter your store username" className="border border-slate-300 outline-slate-400 w-full max-w-lg p-2 rounded" />
 
                         <p>Name</p>
-                        <input name="name" onChange={onChangeHandler} value={storeInfo.name} type="text" placeholder="Enter your store name" className="border border-slate-300 outline-slate-400 w-full max-w-lg p-2 rounded" />
+                        <input name="name" onChange={onChangeHandler} value={storeInfo.name} required type="text" placeholder="Enter your store name" className="border border-slate-300 outline-slate-400 w-full max-w-lg p-2 rounded" />
 
                         <p>Description</p>
-                        <textarea name="description" onChange={onChangeHandler} value={storeInfo.description} rows={5} placeholder="Enter your store description" className="border border-slate-300 outline-slate-400 w-full max-w-lg p-2 rounded resize-none" />
+                        <textarea name="description" onChange={onChangeHandler} value={storeInfo.description} required rows={5} placeholder="Enter your store description" className="border border-slate-300 outline-slate-400 w-full max-w-lg p-2 rounded resize-none" />
 
                         <p>Email</p>
-                        <input name="email" onChange={onChangeHandler} value={storeInfo.email} type="email" placeholder="Enter your store email" className="border border-slate-300 outline-slate-400 w-full max-w-lg p-2 rounded" />
+                        <input name="email" onChange={onChangeHandler} value={storeInfo.email} required type="email" placeholder="Enter your store email" className="border border-slate-300 outline-slate-400 w-full max-w-lg p-2 rounded" />
 
                         <p>Contact Number</p>
-                        <input name="contact" onChange={onChangeHandler} value={storeInfo.contact} type="text" placeholder="Enter your store contact number" className="border border-slate-300 outline-slate-400 w-full max-w-lg p-2 rounded" />
+                        <input name="contact" onChange={onChangeHandler} value={storeInfo.contact} required type="text" placeholder="Enter your store contact number" className="border border-slate-300 outline-slate-400 w-full max-w-lg p-2 rounded" />
 
                         <p>Address</p>
-                        <textarea name="address" onChange={onChangeHandler} value={storeInfo.address} rows={5} placeholder="Enter your store address" className="border border-slate-300 outline-slate-400 w-full max-w-lg p-2 rounded resize-none" />
+                        <textarea name="address" onChange={onChangeHandler} value={storeInfo.address} required rows={5} placeholder="Enter your store address" className="border border-slate-300 outline-slate-400 w-full max-w-lg p-2 rounded resize-none" />
 
                         <button className="bg-slate-800 text-white px-12 py-2 rounded mt-10 mb-40 active:scale-95 hover:bg-slate-900 transition ">Submit</button>
                     </form>

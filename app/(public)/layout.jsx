@@ -1,5 +1,6 @@
 'use client'
 import Banner from "@/components/Banner";
+import DemoNotice from "@/components/DemoNotice";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import { useEffect } from "react";
@@ -36,6 +37,7 @@ export default function PublicLayout({ children }) {
 
     return (
         <>
+            <DemoNotice />
             <Banner />
             <Navbar />
             {/* A stalled sync is otherwise invisible. The basket still works. */}

@@ -1682,3 +1682,68 @@ describe('online payment methods match the schema enum', () => {
         expect(isOnlineMethod(undefined)).toBe(false)
     })
 })
+
+// The badge compared order.status against 'confirmed' and 'delivered'. Neither
+// is in the enum — it is uppercase and has no 'confirmed' — so every order
+// rendered in the same neutral colour and the mobile badge was always green.
+describe('order display', () => {
+    const root = fileURLToPath(new URL('..', import.meta.url))
+    const declared = readFileSync(resolve(root, 'prisma/schema.prisma'), 'utf8')
+        .match(/enum OrderStatus \{([^}]*)\}/)[1]
+        .split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('//'))
+
+    it('labels and styles every status the schema declares', async () => {
+        const { statusLabel, statusStyle, STATUS_LABELS } = await import('@/lib/orderDisplay')
+        for (const status of declared) {
+            expect(STATUS_LABELS[status]).toBeTruthy()
+            expect(statusLabel(status)).not.toMatch(/_/)
+            // A status with no style of its own would be indistinguishable.
+            expect(statusStyle(status)).not.toBe(statusStyle('__unknown__'))
+        }
+    })
+
+    it('gives each status a distinct style, so the badge carries information', async () => {
+        const { statusStyle } = await import('@/lib/orderDisplay')
+        const styles = declared.map(statusStyle)
+        expect(new Set(styles).size).toBe(declared.length)
+    })
+
+    it('falls back readably on a status it does not know', async () => {
+        const { statusLabel } = await import('@/lib/orderDisplay')
+        expect(statusLabel('OUT_FOR_DELIVERY')).toBe('OUT FOR DELIVERY')
+        expect(statusLabel(undefined)).toBe('')
+    })
+
+    it('distinguishes cash on delivery from an unconfirmed online payment', async () => {
+        const { paymentLabel } = await import('@/lib/orderDisplay')
+        // COD is not "unpaid" in a way that should alarm a shopper; an online
+        // order still awaiting the reconciliation sweep is.
+        expect(paymentLabel({ paymentMethod: 'COD', isPaid: false }).text).toMatch(/cash on delivery/i)
+        expect(paymentLabel({ paymentMethod: 'RAZORPAY', isPaid: true }).text).toMatch(/paid/i)
+        expect(paymentLabel({ paymentMethod: 'RAZORPAY', isPaid: false }).text).toMatch(/confirming/i)
+        expect(paymentLabel({ paymentMethod: 'RAZORPAY', isPaid: false }).style)
+            .not.toBe(paymentLabel({ paymentMethod: 'RAZORPAY', isPaid: true }).style)
+    })
+})
+
+describe('price formatting', () => {
+    it('groups digits without changing the value', async () => {
+        const { formatAmount } = await import('@/lib/formatPrice')
+        expect(formatAmount(29900)).toBe('29,900')
+        expect(formatAmount(2900)).toBe('2,900')
+        expect(formatAmount(99)).toBe('99')
+    })
+
+    it('keeps paise when there are any, and drops them when there are none', async () => {
+        const { formatAmount } = await import('@/lib/formatPrice')
+        expect(formatAmount(1234.5)).toBe('1,234.50')
+        expect(formatAmount(1234)).toBe('1,234')
+    })
+
+    it('never renders NaN into the page', async () => {
+        const { formatAmount } = await import('@/lib/formatPrice')
+        for (const value of [undefined, null, 'abc', NaN, {}]) {
+            expect(formatAmount(value)).toBe('0')
+        }
+    })
+})

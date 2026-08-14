@@ -7,8 +7,8 @@ import { ClerkProvider } from "@clerk/nextjs";
 const outfit = Outfit({ subsets: ["latin"], weight: ["400", "500", "600"] });
 
 export const metadata = {
-    title: "GoCart. - Shop smarter",
-    description: "GoCart. - Shop smarter",
+    title: "GoCart — a multi-vendor marketplace project",
+    description: "An educational full-stack marketplace: browse a seeded catalogue, add to a cart, apply coupons and place an order. Built with Next.js, Prisma and Razorpay.",
 };
 
 export default function RootLayout({ children }) {

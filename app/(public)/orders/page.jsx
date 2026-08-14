@@ -1,4 +1,5 @@
 'use client'
+import Link from "next/link"
 import PageTitle from "@/components/PageTitle"
 import { useEffect, useState } from "react";
 import OrderItem from "@/components/OrderItem";
@@ -46,7 +47,7 @@ export default function Orders() {
             {orders.length > 0 ? (
                 (
                     <div className="my-20 max-w-7xl mx-auto">
-                        <PageTitle heading="My Orders" text={`Showing total ${orders.length} orders`} linkText={'Go to home'} />
+                        <PageTitle heading="My Orders" text={`${orders.length} ${orders.length === 1 ? 'order' : 'orders'}`} path="/shop" linkText={'Keep shopping'} />
 
                         <table className="w-full max-w-5xl text-slate-500 table-auto border-separate border-spacing-y-12 border-spacing-x-4">
                             <thead>
@@ -66,8 +67,12 @@ export default function Orders() {
                     </div>
                 )
             ) : (
-                <div className="min-h-[80vh] mx-6 flex items-center justify-center text-slate-400">
-                    <h1 className="text-2xl sm:text-4xl font-semibold">You have no orders</h1>
+                <div className="min-h-[80vh] mx-6 flex flex-col items-center justify-center text-center">
+                    <h1 className="text-2xl sm:text-4xl font-semibold text-slate-400">No orders yet</h1>
+                    <p className="text-slate-500 mt-3">Orders you place will appear here.</p>
+                    <Link href="/shop" className="mt-7 bg-slate-800 text-white px-10 py-2.5 text-sm rounded hover:bg-slate-900 active:scale-95 transition">
+                        Start shopping
+                    </Link>
                 </div>
             )}
         </div>

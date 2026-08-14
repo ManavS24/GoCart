@@ -1,12 +1,14 @@
 'use client'
 import { formatAmount } from '@/lib/formatPrice'
 import Counter from "@/components/Counter";
+import Loading from "@/components/Loading";
 import OrderSummary from "@/components/OrderSummary";
 import PageTitle from "@/components/PageTitle";
 import { deleteItemFromCart } from "@/lib/features/cart/cartSlice";
 import { fetchProductsByIds } from "@/lib/features/product/productSlice";
 import { Trash2Icon } from "lucide-react";
 import Image from "next/image";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 
@@ -22,6 +24,12 @@ export default function Cart() {
 
     const [cartArray, setCartArray] = useState([]);
     const [totalPrice, setTotalPrice] = useState(0);
+
+    // An empty cartArray means one of two different things: a genuinely empty
+    // basket, or one whose products have not arrived yet. Saying "empty" for
+    // the second is what made a full cart look cleared on reload.
+    const itemCount = Object.keys(cartItems).length;
+    const awaitingProducts = itemCount > 0 && cartArray.length === 0;
 
     const createCartArray = () => {
         setTotalPrice(0);
@@ -53,11 +61,13 @@ export default function Cart() {
         createCartArray();
     }, [cartItems, productsById]);
 
+    if (awaitingProducts) return <Loading />
+
     return cartArray.length > 0 ? (
         <div className="min-h-screen mx-6 text-slate-800">
 
             <div className="max-w-7xl mx-auto ">
-                <PageTitle heading="My Cart" text="items in your cart" linkText="Add more" />
+                <PageTitle heading="My Cart" text={`${cartArray.length} ${cartArray.length === 1 ? 'item' : 'items'} in your cart`} path="/shop" linkText="Add more" />
 
                 <div className="flex items-start justify-between gap-5 max-lg:flex-col">
 
@@ -76,7 +86,7 @@ export default function Cart() {
                                     <tr key={index} className="space-x-2">
                                         <td className="flex gap-3 my-4">
                                             <div className="flex gap-3 items-center justify-center bg-slate-100 size-18 rounded-md">
-                                                <Image src={item.images[0]} className="h-14 w-auto" alt="" width={45} height={45} />
+                                                <Image src={item.images[0]} className="h-14 w-auto" alt={item.name} width={45} height={45} />
                                             </div>
                                             <div>
                                                 <p className="max-sm:text-sm">{item.name}</p>
@@ -103,8 +113,12 @@ export default function Cart() {
             </div>
         </div>
     ) : (
-        <div className="min-h-[80vh] mx-6 flex items-center justify-center text-slate-400">
-            <h1 className="text-2xl sm:text-4xl font-semibold">Your cart is empty</h1>
+        <div className="min-h-[80vh] mx-6 flex flex-col items-center justify-center text-center">
+            <h1 className="text-2xl sm:text-4xl font-semibold text-slate-400">Your cart is empty</h1>
+            <p className="text-slate-500 mt-3">Browse the catalogue and add something you like.</p>
+            <Link href="/shop" className="mt-7 bg-slate-800 text-white px-10 py-2.5 text-sm rounded hover:bg-slate-900 active:scale-95 transition">
+                Continue shopping
+            </Link>
         </div>
     )
 }

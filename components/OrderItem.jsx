@@ -1,5 +1,6 @@
 'use client'
 import { formatAmount } from '@/lib/formatPrice'
+import { paymentLabel, statusLabel, statusStyle } from '@/lib/orderDisplay'
 import Image from "next/image";
 import { DotIcon } from "lucide-react";
 import { useSelector } from "react-redux";
@@ -13,6 +14,10 @@ const OrderItem = ({ order }) => {
     const [ratingModal, setRatingModal] = useState(null);
 
     const { ratings } = useSelector(state => state.rating);
+
+    // Buyers previously saw no payment information at all, which matters when
+    // an online payment is confirmed by a sweep rather than instantly.
+    const payment = paymentLabel(order);
 
     return (
         <>
@@ -50,34 +55,33 @@ const OrderItem = ({ order }) => {
                 <td className="text-center max-md:hidden">{currency}{formatAmount(order.total)}</td>
 
                 <td className="text-left max-md:hidden">
-                    <p>{order.address.name}, {order.address.street},</p>
-                    <p>{order.address.city}, {order.address.state}, {order.address.zip}, {order.address.country},</p>
+                    <p>{order.address.name}, {order.address.street}</p>
+                    <p>{order.address.city}, {order.address.state} {order.address.zip}, {order.address.country}</p>
                     <p>{order.address.phone}</p>
                 </td>
 
                 <td className="text-left space-y-2 text-sm max-md:hidden">
-                    <div
-                        className={`flex items-center justify-center gap-1 rounded-full p-1 ${order.status === 'confirmed'
-                            ? 'text-yellow-500 bg-yellow-100'
-                            : order.status === 'delivered'
-                                ? 'text-green-500 bg-green-100'
-                                : 'text-slate-500 bg-slate-100'
-                            }`}
-                    >
+                    <div className={`flex items-center justify-center gap-1 rounded-full p-1 ${statusStyle(order.status)}`}>
                         <DotIcon size={10} className="scale-250" />
-                        {order.status.split('_').join(' ').toLowerCase()}
+                        {statusLabel(order.status)}
+                    </div>
+                    <div className={`text-center text-xs rounded-full px-2 py-1 ${payment.style}`}>
+                        {payment.text}
                     </div>
                 </td>
             </tr>
             <tr className="md:hidden">
                 <td colSpan={5}>
                     <p>{order.address.name}, {order.address.street}</p>
-                    <p>{order.address.city}, {order.address.state}, {order.address.zip}, {order.address.country}</p>
+                    <p>{order.address.city}, {order.address.state} {order.address.zip}, {order.address.country}</p>
                     <p>{order.address.phone}</p>
                     <br />
-                    <div className="flex items-center">
-                        <span className='text-center mx-auto px-6 py-1.5 rounded bg-green-100 text-green-700' >
-                            {order.status.replace(/_/g, ' ').toLowerCase()}
+                    <div className="flex items-center justify-center gap-2">
+                        <span className={`text-center px-4 py-1.5 rounded text-sm ${statusStyle(order.status)}`}>
+                            {statusLabel(order.status)}
+                        </span>
+                        <span className={`text-center px-4 py-1.5 rounded text-sm ${payment.style}`}>
+                            {payment.text}
                         </span>
                     </div>
                 </td>

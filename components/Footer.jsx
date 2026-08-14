@@ -23,6 +23,7 @@ const Footer = () => {
                 { text: "All Products", path: '/shop', icon: null },
                 { text: "Become Plus Member", path: '/pricing', icon: null },
                 { text: "Create Your Store", path: '/create-store', icon: null },
+                { text: "About this project", path: '/about', icon: null },
             ]
         },
         {
@@ -76,7 +77,7 @@ const Footer = () => {
                     </div>
                 </div>
                 <p className="py-4 text-sm text-slate-500">
-                    © {new Date().getFullYear()} GoCart. All rights reserved.
+                    © {new Date().getFullYear()} GoCart — an educational project, not a real marketplace.
                 </p>
             </div>
         </footer>

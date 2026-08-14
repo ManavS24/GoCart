@@ -23,7 +23,6 @@ const StoreLayout = ({ children }) => {
             setIsSeller(data.isSeller)
             setStoreInfo(data.storeInfo)
         } catch (error) {
-            console.log(error)
         }
         finally{
             setLoading(false)

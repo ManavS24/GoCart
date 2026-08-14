@@ -1,8 +1,9 @@
 'use client'
+import { formatAmount } from '@/lib/formatPrice'
 import Loading from "@/components/Loading"
 import { useAuth } from "@clerk/nextjs"
 import axios from "axios"
-import { CircleDollarSignIcon, ShoppingBasketIcon, StarIcon, TagsIcon } from "lucide-react"
+import { IndianRupeeIcon, ShoppingBasketIcon, StarIcon, TagsIcon } from "lucide-react"
 import Image from "next/image"
 import { useRouter } from "next/navigation"
 import { useEffect, useState } from "react"
@@ -26,7 +27,7 @@ export default function Dashboard() {
 
     const dashboardCardsData = [
         { title: 'Total Products', value: dashboardData.totalProducts, icon: ShoppingBasketIcon },
-        { title: 'Total Earnings', value: currency + dashboardData.totalEarnings, icon: CircleDollarSignIcon },
+        { title: 'Total Earnings', value: currency + formatAmount(dashboardData.totalEarnings), icon: IndianRupeeIcon },
         { title: 'Total Orders', value: dashboardData.totalOrders, icon: TagsIcon },
         { title: 'Total Ratings', value: dashboardData.ratings.length, icon: StarIcon },
     ]
@@ -74,7 +75,7 @@ export default function Dashboard() {
                         <div key={index} className="flex max-sm:flex-col gap-5 sm:items-center justify-between py-6 border-b border-slate-200 text-sm text-slate-600 max-w-4xl">
                             <div>
                                 <div className="flex gap-3">
-                                    <Image src={review.user.image} alt="" className="w-10 aspect-square rounded-full" width={100} height={100} />
+                                    <Image src={review.user.image} alt={review.user.name} className="w-10 aspect-square rounded-full" width={100} height={100} />
                                     <div>
                                         <p className="font-medium">{review.user.name}</p>
                                         <p className="font-light text-slate-500">{new Date(review.createdAt).toDateString()}</p>
