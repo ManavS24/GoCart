@@ -7,7 +7,7 @@ A multi-vendor e-commerce marketplace where independent sellers list products in
 a shared storefront, a single basket can span several sellers, and an
 administrator approves who goes live.
 
-Built with Next.js 15 (App Router), Prisma on Neon Postgres, Clerk, Stripe,
+Built with Next.js 15 (App Router), Prisma on Neon Postgres, Clerk, Razorpay,
 ImageKit and Inngest.
 
 <!-- TODO(deploy): add hero screenshot -> docs/screenshots/storefront.png -->
@@ -19,7 +19,7 @@ ImageKit and Inngest.
 ## Features
 
 **Shoppers** — browse and search a multi-seller catalogue, server-persisted
-cart, coupon validation, Stripe or cash-on-delivery checkout, order history,
+cart, coupon validation, online or cash-on-delivery checkout, order history,
 product ratings gated on an actual purchase.
 
 **Sellers** — apply for a store, await approval, then manage products with
@@ -39,7 +39,7 @@ platform-wide revenue with an orders-per-day chart.
 | Styling | Tailwind CSS 4 |
 | Database | Neon Postgres via Prisma 6 |
 | Auth & billing | Clerk |
-| Payments | Stripe Checkout + webhooks |
+| Payments | Razorpay payment links + webhooks |
 | Media | ImageKit |
 | Background jobs | Inngest |
 | Client state | Redux Toolkit |
@@ -50,7 +50,7 @@ platform-wide revenue with an orders-per-day chart.
 
 Requires Node 22 (see `.nvmrc`) and free accounts with
 [Neon](https://neon.tech), [Clerk](https://clerk.com),
-[Stripe](https://stripe.com), [ImageKit](https://imagekit.io) and
+[Razorpay](https://razorpay.com), [ImageKit](https://imagekit.io) and
 [Inngest](https://inngest.com).
 
 ```bash
@@ -68,11 +68,12 @@ Two things that will otherwise cost you time:
 
 - **`ADMIN_EMAIL` must be the email you sign up with**, or `/admin` stays locked
   and you cannot approve your own seller store.
-- **`STRIPE_WEBHOOK_SECRET` comes later, and card checkout is refused until it
-  is set.** It is issued once a deployed URL exists to point the webhook at.
-  Until then `POST /api/orders` rejects `STRIPE` with a 503 and cash on delivery
-  carries the whole flow — deliberately, because without the secret a card
-  payment would be captured by Stripe and never confirmed by the app.
+- **`RAZORPAY_WEBHOOK_SECRET` comes later, and online checkout is refused
+  until it is set.** You choose it when creating the webhook, which needs a
+  deployed URL to point at. Until then `POST /api/orders` rejects `RAZORPAY`
+  with a 503 and cash on delivery carries the whole flow — deliberately,
+  because without the secret a payment would be captured by Razorpay and never
+  confirmed by the app.
 
 `npm run check` reports exactly which variables are missing or malformed and
 whether the database is reachable, so a bad credential fails there rather than
@@ -154,7 +155,7 @@ the suite caught it. Highest-value cases:
   operation sequences.
 - Order pricing always comes from the database; quantities must be positive
   integers; addresses must belong to the buyer; coupons must be unexpired.
-- Stripe webhook handling is idempotent and never deletes a paid order.
+- Razorpay webhook handling is idempotent and never deletes a paid order.
 
 ## Deployment
 
@@ -167,15 +168,16 @@ and the whole stack fits in free tiers.
    invalid Clerk key.
 3. Apply migrations **before** deploying, then deploy. The build no longer
    touches the database — see *Releases* below.
-4. In Stripe, add a webhook to `https://<your-app>/api/stripe` for
-   `payment_intent.succeeded` and `payment_intent.canceled`, then set
-   `STRIPE_WEBHOOK_SECRET` and redeploy. **Card checkout stays disabled until
-   this step completes**; the app refuses `STRIPE` orders rather than taking a
-   payment it cannot confirm.
+4. In Razorpay, add a webhook to `https://<your-app>/api/razorpay` for
+   `payment_link.paid`, `payment_link.cancelled` and `payment_link.expired`,
+   set a secret of your choosing, then put the same value in
+   `RAZORPAY_WEBHOOK_SECRET` and redeploy. **Online checkout stays disabled
+   until this step completes**; the app refuses `RAZORPAY` orders rather than
+   taking a payment it cannot confirm.
 5. In Inngest, sync the app at `https://<your-app>/api/inngest`.
 6. Seed the production database once: `npm run seed`.
 7. Confirm the deployment is fully configured: `npm run check -- --production`,
-   which treats deferred variables such as `STRIPE_WEBHOOK_SECRET` as required.
+   which treats deferred variables such as `RAZORPAY_WEBHOOK_SECRET` as required.
 
 ## Troubleshooting
 
@@ -183,7 +185,7 @@ and the whole stack fits in free tiers.
 | --- | --- |
 | Build fails on `publishableKey` | Clerk env vars missing or malformed. Run `npm run check`. |
 | `/admin` says not authorized | `ADMIN_EMAIL` does not match your signed-in Clerk email. |
-| Orders never show as paid | Stripe webhook not configured, or `STRIPE_WEBHOOK_SECRET` is stale. |
+| Orders never show as paid | Razorpay webhook not configured, or `RAZORPAY_WEBHOOK_SECRET` does not match the dashboard. |
 | `relation does not exist` | Migrations not applied — run `npx prisma migrate deploy`. |
 | Empty storefront | Database not seeded — run `npm run seed`. |
 | First request is slow | Neon auto-suspends when idle; the next request wakes it. |

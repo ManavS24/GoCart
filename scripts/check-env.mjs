@@ -37,14 +37,15 @@ const CHECKS = [
     ['NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY', true, /^pk_(test|live)_/, 'starts with pk_test_ or pk_live_'],
     ['CLERK_SECRET_KEY', true, /^sk_(test|live)_/, 'starts with sk_test_ or sk_live_'],
     ['ADMIN_EMAIL', true, /^[^@\s,]+@[^@\s,]+\.[^@\s,]+/, 'must be the email you sign up with'],
-    ['STRIPE_SECRET_KEY', true, /^(sk|rk)_(test|live)_/, 'starts with sk_test_'],
+    ['RAZORPAY_KEY_ID', true, /^rzp_(test|live)_/, 'starts with rzp_test_ or rzp_live_'],
+    ['RAZORPAY_KEY_SECRET', true, /.+/, 'from Razorpay Dashboard -> Account & Settings -> API Keys'],
     ['IMAGEKIT_PUBLIC_KEY', true, /^public_/, 'starts with public_'],
     ['IMAGEKIT_PRIVATE_KEY', true, /^private_/, 'starts with private_'],
     ['IMAGEKIT_URL_ENDPOINT', true, /^https:\/\/ik\.imagekit\.io\/.+/, 'https://ik.imagekit.io/<your_id>'],
     ['INNGEST_EVENT_KEY', true, /.+/, 'from the Inngest dashboard'],
     ['INNGEST_SIGNING_KEY', true, /.+/, 'from the Inngest dashboard'],
     ['NEXT_PUBLIC_CURRENCY_SYMBOL', true, /.+/, 'e.g. $'],
-    ['STRIPE_WEBHOOK_SECRET', 'production', /^whsec_/, 'required to take card payments; Stripe checkout is refused without it'],
+    ['RAZORPAY_WEBHOOK_SECRET', 'production', /.+/, 'required to take online payments; online checkout is refused without it'],
     ['OPENAI_API_KEY', false, /.+/, 'optional — only powers AI product autofill'],
     ['OPENAI_BASE_URL', false, /^https?:\/\//, 'optional'],
     ['OPENAI_MODEL', false, /.+/, 'optional'],
@@ -94,9 +95,9 @@ console.log(`\n  All required variables present${deferred ? ` (${deferred} optio
 
 // Say what a deferred webhook secret costs, rather than a quiet `skip`.
 if (!STRICT) {
-    const secret = env.STRIPE_WEBHOOK_SECRET ?? ''
+    const secret = env.RAZORPAY_WEBHOOK_SECRET ?? ''
     if (!secret || PLACEHOLDER.test(secret)) {
-        console.log('  Note: STRIPE_WEBHOOK_SECRET is unset, so card checkout will be refused')
+        console.log('  Note: RAZORPAY_WEBHOOK_SECRET is unset, so online checkout will be refused')
         console.log('        (cash on delivery still works). Re-run with --production before release.')
     }
 }

@@ -2,67 +2,72 @@ import { logger } from "@/lib/logger"
 import prisma from "@/lib/prisma"
 import { NextResponse } from "next/server"
 import { apiError } from "@/lib/apiError";
-import Stripe from "stripe"
+import { verifyWebhookSignature } from "@/lib/razorpaySignature"
 
 // Claims the event id and reports whether this delivery should do the work.
 // Only a *completed* claim suppresses redelivery: an incomplete one is the
 // debris of a failed delivery, and both mutations below are idempotent.
-const claimEvent = async (event) => {
+const claimEvent = async (eventId, type) => {
     try {
         await prisma.processedWebhookEvent.create({
-            data: { id: event.id, type: event.type }
+            data: { id: eventId, type }
         })
         return true
     } catch (error) {
         if (error.code !== 'P2002') throw error
 
         const existing = await prisma.processedWebhookEvent.findUnique({
-            where: { id: event.id }
+            where: { id: eventId }
         })
         return !existing?.completedAt
     }
 }
 
-export async function POST(request){
-    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
+// Razorpay's own id when it sends one, otherwise derived from the entity so a
+// redelivery still collides with its first attempt in the ledger.
+const eventIdFor = (request, event) => {
+    const header = request.headers.get('x-razorpay-event-id')
+    if (header) return header
 
+    const entityId = event?.payload?.payment_link?.entity?.id
+    return entityId ? `${event.event}:${entityId}` : null
+}
+
+export async function POST(request){
     // Its own block, so an unverifiable payload stays a 400 rather than a 500.
     let event
+    let eventId
     try {
+        // The raw text, not the parsed object: the signature covers the exact
+        // bytes sent, which re-serialising would not reproduce.
         const body = await request.text()
-        const sig = request.headers.get('stripe-signature')
-        event = stripe.webhooks.constructEvent(body, sig, process.env.STRIPE_WEBHOOK_SECRET)
+        const signature = request.headers.get('x-razorpay-signature')
+
+        if (!verifyWebhookSignature(body, signature, process.env.RAZORPAY_WEBHOOK_SECRET)) {
+            throw new Error('razorpay webhook signature verification failed')
+        }
+
+        event = JSON.parse(body)
+        eventId = eventIdFor(request, event)
+        if (!eventId) throw new Error('razorpay webhook carried no identifiable event')
     } catch (error) {
         return apiError(error, 400)
     }
 
     try {
-        if (!(await claimEvent(event))) {
+        if (!(await claimEvent(eventId, event.event))) {
             // Alertable: a spike means events are being replayed.
-            logger.info('webhook_duplicate', { eventId: event.id, type: event.type })
+            logger.info('webhook_duplicate', { eventId, type: event.event })
             return NextResponse.json({ received: true, duplicate: true })
         }
 
-        // Before the transaction opens: holding one across an external round
-        // trip pins a connection and risks the transaction timeout.
-        const resolveOrders = async (paymentIntentId) => {
-            const session = await stripe.checkout.sessions.list({
-                payment_intent: paymentIntentId
-            })
+        // Carried on the payload itself, so confirming a payment needs no
+        // round trip back to Razorpay.
+        const resolveOrders = (entity) => {
+            const { orderIds, userId, appId } = entity?.notes ?? {}
 
-            if(!session.data.length){
-                // Retryable, not terminal: a session not yet visible is
-                // indistinguishable from one that never existed.
-                logger.warn('webhook_session_missing', { eventId: event.id, paymentIntentId })
-                throw new Error(`no checkout session for payment intent ${paymentIntentId}`)
-            }
-
-            const {orderIds, userId, appId} = session.data[0].metadata
-
-            // Ignore sessions created by other apps sharing this Stripe account.
-            if(appId !== 'gocart' || !orderIds){
-                return null
-            }
+            // Ignore links created by other apps sharing this Razorpay account.
+            if (appId !== 'gocart' || !orderIds) return null
 
             return { orderIds: orderIds.split(','), userId }
         }
@@ -70,20 +75,21 @@ export async function POST(request){
         let target = null
         let isPaid = false
 
-        switch (event.type) {
-            case 'payment_intent.succeeded': {
+        switch (event.event) {
+            case 'payment_link.paid': {
                 isPaid = true
-                target = await resolveOrders(event.data.object.id)
+                target = resolveOrders(event.payload?.payment_link?.entity)
                 break;
             }
 
-            case 'payment_intent.canceled': {
-                target = await resolveOrders(event.data.object.id)
+            case 'payment_link.cancelled':
+            case 'payment_link.expired': {
+                target = resolveOrders(event.payload?.payment_link?.entity)
                 break;
             }
 
             default:
-                logger.info('webhook_ignored', { eventId: event.id, type: event.type })
+                logger.info('webhook_ignored', { eventId, type: event.event })
                 break;
         }
 
@@ -109,15 +115,15 @@ export async function POST(request){
             }
 
             await tx.processedWebhookEvent.update({
-                where: { id: event.id },
+                where: { id: eventId },
                 data: { completedAt: new Date() }
             })
         })
 
-        // Counted against Stripe's own succeeded-payment total to reconcile.
+        // Counted against Razorpay's own captured-payment total to reconcile.
         logger.info('webhook_processed', {
-            eventId: event.id,
-            type: event.type,
+            eventId,
+            type: event.event,
             orderIds: target?.orderIds ?? [],
             markedPaid: Boolean(target && isPaid),
         })

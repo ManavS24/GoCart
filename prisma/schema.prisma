@@ -50,9 +50,12 @@ enum OrderStatus {
     DELIVERED
 }
 
+// STRIPE is retained for rows written before the switch to Razorpay; nothing
+// creates one. Removing a value is a contract migration, not an additive one.
 enum PaymentMethod {
     COD
     STRIPE
+    RAZORPAY
 }
 
 model Order {

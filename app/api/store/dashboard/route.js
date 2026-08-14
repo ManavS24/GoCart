@@ -16,7 +16,7 @@ export async function GET(request){
         }
 
         // Earnings and the order count must mean the same thing as the order
-        // list: an abandoned Stripe checkout is not revenue.
+        // list: an abandoned online checkout is not revenue.
         const orders = await prisma.order.findMany({where: {storeId, ...PLACED_ORDER}})
 
          const products = await prisma.product.findMany({where: {storeId}})

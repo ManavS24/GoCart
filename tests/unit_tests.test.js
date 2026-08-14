@@ -4,6 +4,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
+import { createHmac } from 'node:crypto'
 
 const prisma = {
     user: { findUnique: vi.fn() },
@@ -1510,7 +1511,7 @@ describe('security response headers', () => {
         expect(reportOnly).toContain('https://ik.imagekit.io')          // product images
         expect(reportOnly).toContain('https://*.clerk.accounts.dev')    // auth SDK
         expect(reportOnly).toContain('https://challenges.cloudflare.com') // Clerk bot check
-        expect(reportOnly).toContain('https://checkout.stripe.com')     // checkout redirect
+        expect(reportOnly).toContain('https://rzp.io')                   // checkout redirect
         expect(reportOnly).toMatch(/worker-src [^;]*blob:/)             // Clerk workers
     })
 
@@ -1648,5 +1649,69 @@ describe('dependency floors', () => {
                 `${path} resolved to ${meta.version}`,
             ).toBe(true)
         }
+    })
+})
+
+// ONLINE_PAYMENT_METHODS holds plain strings, because a client component
+// imports it and @prisma/client cannot reach the browser. That severs the
+// compile-time tie to the schema, so it is re-tied here.
+describe('online payment methods match the schema enum', () => {
+    const root = fileURLToPath(new URL('..', import.meta.url))
+    const schema = readFileSync(resolve(root, 'prisma/schema.prisma'), 'utf8')
+
+    const declared = schema
+        .match(/enum PaymentMethod \{([^}]*)\}/)[1]
+        .split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('//'))
+
+    it('names only values the schema declares', async () => {
+        const { ONLINE_PAYMENT_METHODS, ACTIVE_ONLINE_METHOD } = await import('@/lib/onlinePayment')
+        for (const method of ONLINE_PAYMENT_METHODS) expect(declared).toContain(method)
+        expect(declared).toContain(ACTIVE_ONLINE_METHOD)
+    })
+
+    it('covers every declared value that is not COD', async () => {
+        const { ONLINE_PAYMENT_METHODS } = await import('@/lib/onlinePayment')
+        // A provider added to the schema and forgotten here would be treated as
+        // pay-on-delivery: its orders would count as placed before payment.
+        expect([...ONLINE_PAYMENT_METHODS].sort()).toEqual(declared.filter(v => v !== 'COD').sort())
+    })
+
+    it('treats the active provider as an online method', async () => {
+        const { ACTIVE_ONLINE_METHOD, isOnlineMethod } = await import('@/lib/onlinePayment')
+        expect(isOnlineMethod(ACTIVE_ONLINE_METHOD)).toBe(true)
+        expect(isOnlineMethod('COD')).toBe(false)
+        expect(isOnlineMethod(undefined)).toBe(false)
+    })
+})
+
+describe('razorpay webhook signatures', () => {
+    const secret = 'whsec'
+    const body = '{"event":"payment_link.paid"}'
+    const digest = (b, s = secret) => createHmac('sha256', s).update(b).digest('hex')
+
+    it('accepts a digest of the exact bytes signed', async () => {
+        const { verifyWebhookSignature } = await import('@/lib/razorpaySignature')
+        expect(verifyWebhookSignature(body, digest(body), secret)).toBe(true)
+    })
+
+    it('rejects a body altered after signing', async () => {
+        const { verifyWebhookSignature } = await import('@/lib/razorpaySignature')
+        expect(verifyWebhookSignature(`${body} `, digest(body), secret)).toBe(false)
+    })
+
+    it('rejects a digest made with a different secret', async () => {
+        const { verifyWebhookSignature } = await import('@/lib/razorpaySignature')
+        expect(verifyWebhookSignature(body, digest(body, 'other'), secret)).toBe(false)
+    })
+
+    it('returns false rather than throwing on a missing or malformed signature', async () => {
+        const { verifyWebhookSignature } = await import('@/lib/razorpaySignature')
+        // timingSafeEqual throws on a length mismatch, so a short signature
+        // must be answered before it is reached.
+        for (const sig of [undefined, null, '', 'abc', digest(body).slice(0, -1)]) {
+            expect(verifyWebhookSignature(body, sig, secret)).toBe(false)
+        }
+        expect(verifyWebhookSignature(body, digest(body), undefined)).toBe(false)
+        expect(verifyWebhookSignature(undefined, digest(body), secret)).toBe(false)
     })
 })

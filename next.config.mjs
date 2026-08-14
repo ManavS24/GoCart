@@ -1,5 +1,5 @@
 // Origins the browser is actually asked to contact, derived from the code.
-// Stripe is reached by navigation only, so it needs form-action but no frame-src.
+// Razorpay is reached by navigation only, so it needs form-action but no frame-src.
 const CLERK = ['https://*.clerk.accounts.dev', 'https://*.clerk.com']
 const CLERK_IMAGES = ['https://img.clerk.com', 'https://images.clerk.dev']
 const TURNSTILE = ['https://challenges.cloudflare.com']
@@ -16,7 +16,7 @@ const csp = [
     `connect-src 'self' ${CLERK.join(' ')}`,
     `worker-src 'self' blob:`,
     `frame-src ${[...CLERK, ...TURNSTILE].join(' ')}`,
-    `form-action 'self' https://checkout.stripe.com`,
+    `form-action 'self' https://rzp.io https://api.razorpay.com`,
     `base-uri 'self'`,
     `object-src 'none'`,
     `frame-ancestors 'none'`,

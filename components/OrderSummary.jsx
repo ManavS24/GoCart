@@ -8,6 +8,7 @@ import {Protect, useAuth, useUser} from '@clerk/nextjs'
 import axios from 'axios';
 import { fetchCart } from '@/lib/features/cart/cartSlice';
 import { priceBasket } from '@/lib/checkoutPricing';
+import { isOnlineMethod } from '@/lib/onlinePayment';
 import { fromCents, sumCents, toCents } from '@/lib/money';
 
 const OrderSummary = ({ totalPrice, items }) => {
@@ -91,7 +92,7 @@ const OrderSummary = ({ totalPrice, items }) => {
            // Spent: the next basket is a new submission.
            idempotencyKey.current = crypto.randomUUID()
 
-           if(paymentMethod === 'STRIPE'){
+           if(isOnlineMethod(paymentMethod)){
             window.location.href = data.session.url;
             return
            }
@@ -117,8 +118,8 @@ const OrderSummary = ({ totalPrice, items }) => {
                 <label htmlFor="COD" className='cursor-pointer'>COD</label>
             </div>
             <div className='flex gap-2 items-center mt-1'>
-                <input type="radio" id="STRIPE" name='payment' onChange={() => setPaymentMethod('STRIPE')} checked={paymentMethod === 'STRIPE'} className='accent-gray-500' />
-                <label htmlFor="STRIPE" className='cursor-pointer'>Stripe Payment</label>
+                <input type="radio" id="RAZORPAY" name='payment' onChange={() => setPaymentMethod('RAZORPAY')} checked={paymentMethod === 'RAZORPAY'} className='accent-gray-500' />
+                <label htmlFor="RAZORPAY" className='cursor-pointer'>Pay Online</label>
             </div>
             <div className='my-4 py-4 border-y border-slate-200 text-slate-400'>
                 <p>Address</p>

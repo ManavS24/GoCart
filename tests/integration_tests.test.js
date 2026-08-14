@@ -1,5 +1,6 @@
 // Modules wired together. Only external boundaries are mocked (Prisma, Clerk,
-// Stripe, ImageKit, OpenAI, Inngest); real middleware and route handlers run.
+// Razorpay, ImageKit, OpenAI, Inngest); real middleware and route handlers run.
+import { createHmac } from 'crypto'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const prisma = {
@@ -27,10 +28,8 @@ prisma.$transaction = vi.fn(async (fn) => {
 })
 const getAuth = vi.fn()
 const clerkGetUser = vi.fn()
-const stripeConstructEvent = vi.fn()
-const stripeListSessions = vi.fn()
-const stripeCreateSession = vi.fn()
-const stripeListPaymentIntents = vi.fn()
+const razorpayCreateLink = vi.fn()
+const razorpayListLinks = vi.fn()
 const imagekitUpload = vi.fn()
 const inngestSend = vi.fn()
 const openaiCreate = vi.fn()
@@ -40,17 +39,16 @@ vi.mock('@clerk/nextjs/server', () => ({
     getAuth: (...a) => getAuth(...a),
     clerkClient: async () => ({ users: { getUser: (...a) => clerkGetUser(...a) } }),
 }))
-// stripe-node is callable with and without `new`; the double must match.
-vi.mock('stripe', () => {
-    function FakeStripe() {
-        const self = this instanceof FakeStripe ? this : Object.create(FakeStripe.prototype)
-        self.webhooks = { constructEvent: (...a) => stripeConstructEvent(...a) }
-        self.checkout = { sessions: { list: (...a) => stripeListSessions(...a), create: (...a) => stripeCreateSession(...a) } }
-        // The SDK's list() auto-paginates under `for await`; the double must too.
-        self.paymentIntents = { list: (...a) => stripeListPaymentIntents(...a) }
+vi.mock('razorpay', () => {
+    function FakeRazorpay() {
+        const self = this instanceof FakeRazorpay ? this : Object.create(FakeRazorpay.prototype)
+        self.paymentLink = {
+            create: (...a) => razorpayCreateLink(...a),
+            all: (...a) => razorpayListLinks(...a),
+        }
         return self
     }
-    return { default: FakeStripe }
+    return { default: FakeRazorpay }
 })
 vi.mock('@/configs/imageKit', () => ({
     default: () => ({ upload: (...a) => imagekitUpload(...a), url: () => 'https://ik.test/img.webp' }),
@@ -73,7 +71,7 @@ const addressApi = await import('@/app/api/address/route')
 const couponApi = await import('@/app/api/coupon/route')
 const ratingApi = await import('@/app/api/rating/route')
 const productsApi = await import('@/app/api/products/route')
-const stripeApi = await import('@/app/api/stripe/route')
+const razorpayApi = await import('@/app/api/razorpay/route')
 const storeCreate = await import('@/app/api/store/create/route')
 const storeProduct = await import('@/app/api/store/product/route')
 const storeDashboard = await import('@/app/api/store/dashboard/route')
@@ -111,6 +109,20 @@ const routeFiles = (dir = API_ROOT, route = '/api', out = []) => {
 }
 
 const ORIGIN = 'https://shop.test'
+const WEBHOOK_SECRET = 'rzp_webhook_secret'
+
+// Signed the way Razorpay signs, so the handler's real HMAC check runs rather
+// than a stubbed one: a body and a signature that disagree must be rejected.
+const signed = (payload, { secret = WEBHOOK_SECRET, eventId = 'evt_1' } = {}) => {
+    const raw = JSON.stringify(payload)
+    return {
+        text: async () => raw,
+        headers: new Headers({
+            'x-razorpay-signature': createHmac('sha256', secret).update(raw).digest('hex'),
+            'x-razorpay-event-id': eventId,
+        }),
+    }
+}
 const json = (body) => ({
     json: async () => body,
     headers: new Headers({ origin: ORIGIN }),
@@ -183,9 +195,11 @@ beforeEach(() => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     vi.spyOn(console, 'log').mockImplementation(() => {})
     process.env.ADMIN_EMAIL = 'admin@example.com'
-    // A correctly configured deployment has this; card checkout is refused
+    // A correctly configured deployment has this; online checkout is refused
     // without it, so tests for that case delete it explicitly.
-    process.env.STRIPE_WEBHOOK_SECRET = 'whsec_test'
+    process.env.RAZORPAY_WEBHOOK_SECRET = WEBHOOK_SECRET
+    process.env.RAZORPAY_KEY_ID = 'rzp_test_x'
+    process.env.RAZORPAY_KEY_SECRET = 'secret'
 })
 
 describe('integration: anonymous callers are refused everywhere', () => {
@@ -227,7 +241,7 @@ describe('integration: anonymous callers are refused everywhere', () => {
         '/api/store/orders': storeOrders,
         '/api/store/product': storeProduct,
         '/api/store/stock-toggle': storeStock,
-        '/api/stripe': stripeApi,
+        '/api/razorpay': razorpayApi,
     }
 
     // Endpoints that are meant to answer an anonymous caller, each with the
@@ -236,7 +250,7 @@ describe('integration: anonymous callers are refused everywhere', () => {
         '/api/products GET': 'the storefront catalogue',
         '/api/products/[productId] GET': 'a public product page',
         '/api/store/data GET': 'a public store page',
-        '/api/stripe POST': 'authenticated by the Stripe webhook signature',
+        '/api/razorpay POST': 'authenticated by the Razorpay webhook signature',
         '/api/health GET': 'a liveness probe, which must answer before anyone is signed in',
     }
     // Every guarded endpoint now authenticates before reading its body, so there
@@ -248,7 +262,7 @@ describe('integration: anonymous callers are refused everywhere', () => {
         json: async () => ({}),
         text: async () => '{}',
         formData: async () => new FormData(),
-        headers: new Headers({ origin: ORIGIN, 'stripe-signature': 'sig' }),
+        headers: new Headers({ origin: ORIGIN, 'x-razorpay-signature': 'sig' }),
         nextUrl: new URL(u),
         url: u,
     })
@@ -267,7 +281,6 @@ describe('integration: anonymous callers are refused everywhere', () => {
 
             it(`${method} ${route} refuses an anonymous caller and reaches no data`, async () => {
                 anonymous()
-                stripeConstructEvent.mockImplementation(() => { throw new Error('no signature') })
                 const res = await mod[method](anyRequest(`${ORIGIN}${route}`))
                 expect(res.status).toBe(NON_401[key] ?? 401)
                 expect(readsPerformed()).toEqual([])
@@ -572,51 +585,64 @@ describe('integration: checkout flow', () => {
         expect(Object.keys(couponWhere).sort()).toEqual(Object.keys(orderWhere).sort())
     })
 
-    it('routes a STRIPE order to a checkout session instead of clearing the cart', async () => {
-        stripeCreateSession.mockResolvedValue({ url: 'https://stripe.test/s/1' })
-        const { status, body: res } = await read(await orders.POST(json(body({ paymentMethod: 'STRIPE' }))))
+    it('routes an online order to a payment link instead of clearing the cart', async () => {
+        razorpayCreateLink.mockResolvedValue({ id: 'plink_1', short_url: 'https://rzp.test/i/1' })
+        const { status, body: res } = await read(await orders.POST(json(body({ paymentMethod: 'RAZORPAY' }))))
         expect(status).toBe(200)
-        expect(res.session.url).toBe('https://stripe.test/s/1')
+        expect(res.session.url).toBe('https://rzp.test/i/1')
         // Cleared by the webhook only once payment succeeds.
         expect(prisma.user.update).not.toHaveBeenCalled()
 
-        const session = stripeCreateSession.mock.calls[0][0]
-        expect(session.metadata.appId).toBe('gocart')
-        expect(session.metadata.orderIds).toBe('order_1')
-        expect(session.line_items[0].price_data.unit_amount).toBe(20500)
-        expect(session.success_url).toBe(`${ORIGIN}/loading?nextUrl=orders`)
+        const link = razorpayCreateLink.mock.calls[0][0]
+        expect(link.notes.appId).toBe('gocart')
+        expect(link.notes.orderIds).toBe('order_1')
+        expect(link.amount).toBe(20500)
+        expect(link.callback_url).toBe(`${ORIGIN}/loading?nextUrl=orders`)
     })
 
     it('falls back to the request origin when the Origin header is absent', async () => {
-        stripeCreateSession.mockResolvedValue({ url: 'x' })
+        razorpayCreateLink.mockResolvedValue({ url: 'x' })
         await orders.POST({
-            json: async () => body({ paymentMethod: 'STRIPE' }),
+            json: async () => body({ paymentMethod: 'RAZORPAY' }),
             headers: new Headers(), nextUrl: new URL(ORIGIN), url: ORIGIN,
         })
-        expect(stripeCreateSession.mock.calls[0][0].success_url).toBe(`${ORIGIN}/loading?nextUrl=orders`)
+        expect(razorpayCreateLink.mock.calls[0][0].callback_url).toBe(`${ORIGIN}/loading?nextUrl=orders`)
     })
 })
 
-describe('integration: stripe webhook completes the order lifecycle', () => {
-    const hook = () => ({ text: async () => '{}', headers: new Headers({ 'stripe-signature': 'sig' }) })
-    const evt = (type, id = 'evt_1') => ({ id, type, data: { object: { id: 'pi_1' } } })
-    const META = { orderIds: 'o1,o2', userId: 'u1', appId: 'gocart' }
+describe('integration: razorpay webhook completes the order lifecycle', () => {
+    const NOTES = { orderIds: 'o1,o2', userId: 'u1', appId: 'gocart' }
+    const evt = (event, notes = NOTES) => ({
+        event,
+        payload: { payment_link: { entity: { id: 'plink_1', notes } } },
+    })
+    const hook = (event = 'payment_link.paid', opts) => signed(evt(event), opts)
 
     beforeEach(() => {
         prisma.processedWebhookEvent.create.mockResolvedValue({})
-        stripeListSessions.mockResolvedValue({ data: [{ metadata: META }] })
     })
 
     it('rejects an unverifiable signature before any write', async () => {
-        stripeConstructEvent.mockImplementation(() => { throw new Error('Invalid signature') })
-        const { status } = await read(await stripeApi.POST(hook()))
+        const { status } = await read(await razorpayApi.POST(signed(evt('payment_link.paid'), { secret: 'wrong' })))
         expect(status).toBe(400)
         expect(prisma.processedWebhookEvent.create).not.toHaveBeenCalled()
     })
 
+    it('rejects a body altered after signing', async () => {
+        const req = signed(evt('payment_link.paid'))
+        // Same signature, different bytes: the tamper the HMAC exists to catch.
+        const tampered = { ...req, text: async () => JSON.stringify(evt('payment_link.paid', { ...NOTES, orderIds: 'attacker' })) }
+        expect((await read(await razorpayApi.POST(tampered))).status).toBe(400)
+        expect(prisma.order.updateMany).not.toHaveBeenCalled()
+    })
+
+    it('rejects a request carrying no signature at all', async () => {
+        const req = { text: async () => JSON.stringify(evt('payment_link.paid')), headers: new Headers() }
+        expect((await read(await razorpayApi.POST(req))).status).toBe(400)
+    })
+
     it('marks orders paid and clears the cart on success', async () => {
-        stripeConstructEvent.mockReturnValue(evt('payment_intent.succeeded'))
-        const { status } = await read(await stripeApi.POST(hook()))
+        const { status } = await read(await razorpayApi.POST(hook()))
         expect(status).toBe(200)
         expect(prisma.order.updateMany).toHaveBeenCalledWith({ where: { id: { in: ['o1', 'o2'] } }, data: { isPaid: true } })
         // updateMany: clearing the cart of a user row that does not exist yet
@@ -624,65 +650,78 @@ describe('integration: stripe webhook completes the order lifecycle', () => {
         expect(prisma.user.updateMany).toHaveBeenCalledWith({ where: { id: 'u1' }, data: { cart: {} } })
     })
 
-    it('deletes only unpaid orders on cancellation', async () => {
-        stripeConstructEvent.mockReturnValue(evt('payment_intent.canceled'))
-        await stripeApi.POST(hook())
-        expect(prisma.order.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ['o1', 'o2'] }, isPaid: false } })
+    it('deletes only unpaid orders when the link is cancelled or expires', async () => {
+        for (const event of ['payment_link.cancelled', 'payment_link.expired']) {
+            vi.clearAllMocks()
+            prisma.processedWebhookEvent.create.mockResolvedValue({})
+            await razorpayApi.POST(hook(event))
+            expect(prisma.order.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ['o1', 'o2'] }, isPaid: false } })
+            expect(prisma.order.updateMany).not.toHaveBeenCalled()
+        }
     })
 
     it('claims the event id before mutating anything', async () => {
-        stripeConstructEvent.mockReturnValue(evt('payment_intent.succeeded'))
-        await stripeApi.POST(hook())
+        await razorpayApi.POST(hook())
         expect(prisma.processedWebhookEvent.create.mock.invocationCallOrder[0])
             .toBeLessThan(prisma.order.updateMany.mock.invocationCallOrder[0])
     })
 
+    it('keys the ledger on the header event id, so a redelivery collides', async () => {
+        await razorpayApi.POST(hook('payment_link.paid', { eventId: 'evt_abc' }))
+        expect(prisma.processedWebhookEvent.create)
+            .toHaveBeenCalledWith({ data: { id: 'evt_abc', type: 'payment_link.paid' } })
+    })
+
+    it('falls back to a deterministic id when the header is absent', async () => {
+        const raw = JSON.stringify(evt('payment_link.paid'))
+        const req = {
+            text: async () => raw,
+            headers: new Headers({ 'x-razorpay-signature': createHmac('sha256', WEBHOOK_SECRET).update(raw).digest('hex') }),
+        }
+        expect((await read(await razorpayApi.POST(req))).status).toBe(200)
+        // Derived from the entity, so the same delivery twice still collides.
+        expect(prisma.processedWebhookEvent.create)
+            .toHaveBeenCalledWith({ data: { id: 'payment_link.paid:plink_1', type: 'payment_link.paid' } })
+    })
+
     it('ignores a replayed delivery without touching orders', async () => {
-        stripeConstructEvent.mockReturnValue(evt('payment_intent.canceled'))
         prisma.processedWebhookEvent.create.mockRejectedValue(Object.assign(new Error('dup'), { code: 'P2002' }))
         // A *completed* claim is what makes this a genuine replay.
         prisma.processedWebhookEvent.findUnique.mockResolvedValue({ id: 'evt_1', completedAt: new Date() })
-        const { status, body } = await read(await stripeApi.POST(hook()))
+        const { status, body } = await read(await razorpayApi.POST(hook('payment_link.cancelled')))
         expect(status).toBe(200)
         expect(body.duplicate).toBe(true)
         expect(prisma.order.deleteMany).not.toHaveBeenCalled()
-        expect(stripeListSessions).not.toHaveBeenCalled()
+        expect(prisma.$transaction).not.toHaveBeenCalled()
     })
 
     it('surfaces a non-duplicate ledger failure', async () => {
-        stripeConstructEvent.mockReturnValue(evt('payment_intent.succeeded'))
         prisma.processedWebhookEvent.create.mockRejectedValue(Object.assign(new Error('down'), { code: 'P1001' }))
-        const failed = await read(await stripeApi.POST(hook()))
+        const failed = await read(await razorpayApi.POST(hook()))
         expect(failed.status).toBe(500)
         expect(failed.body.error).not.toMatch(/P1001|down/)
         expect(prisma.order.updateMany).not.toHaveBeenCalled()
     })
 
-    it('ignores sessions belonging to another app', async () => {
-        stripeConstructEvent.mockReturnValue(evt('payment_intent.succeeded'))
-        stripeListSessions.mockResolvedValue({ data: [{ metadata: { ...META, appId: 'other' } }] })
-        expect((await read(await stripeApi.POST(hook()))).status).toBe(200)
+    it('ignores links belonging to another app', async () => {
+        await razorpayApi.POST(signed(evt('payment_link.paid', { ...NOTES, appId: 'other' })))
         expect(prisma.order.updateMany).not.toHaveBeenCalled()
     })
 
     // The claim used to commit before the work, so a delivery that failed
     // partway burned the event id and the retry was refused as a duplicate.
     it('reprocesses a retry after the first delivery failed, and the order ends up paid', async () => {
-        stripeConstructEvent.mockReturnValue(evt('payment_intent.succeeded'))
-
-        // Delivery 1: the claim lands, then Stripe times out.
-        stripeListSessions.mockRejectedValueOnce(new Error('ETIMEDOUT'))
-        expect((await read(await stripeApi.POST(hook()))).status).toBe(500)
-        expect(prisma.order.updateMany).not.toHaveBeenCalled()
+        // Delivery 1: the claim lands, then the transaction rolls back.
+        prisma.$transaction.mockRejectedValueOnce(new Error('deadlock detected'))
+        expect((await read(await razorpayApi.POST(hook()))).status).toBe(500)
         // Nothing marked the claim complete, so it cannot suppress the retry.
         expect(prisma.processedWebhookEvent.update).not.toHaveBeenCalled()
 
-        // Delivery 2: Stripe retries the same event id.
+        // Delivery 2: Razorpay retries the same event id.
         prisma.processedWebhookEvent.create.mockRejectedValue(Object.assign(new Error('dup'), { code: 'P2002' }))
         prisma.processedWebhookEvent.findUnique.mockResolvedValue({ id: 'evt_1', completedAt: null })
-        stripeListSessions.mockResolvedValue({ data: [{ metadata: META }] })
 
-        const { status, body } = await read(await stripeApi.POST(hook()))
+        const { status, body } = await read(await razorpayApi.POST(hook()))
         expect(status).toBe(200)
         expect(body.duplicate).toBeUndefined()
         expect(prisma.order.updateMany).toHaveBeenCalledWith({ where: { id: { in: ['o1', 'o2'] } }, data: { isPaid: true } })
@@ -691,8 +730,7 @@ describe('integration: stripe webhook completes the order lifecycle', () => {
     })
 
     it('completes the claim in the same transaction as the mutations', async () => {
-        stripeConstructEvent.mockReturnValue(evt('payment_intent.succeeded'))
-        await stripeApi.POST(hook())
+        await razorpayApi.POST(hook())
 
         expect(prisma.$transaction).toHaveBeenCalledTimes(1)
         // Both issued before the callback returns, so neither commits without
@@ -703,74 +741,39 @@ describe('integration: stripe webhook completes the order lifecycle', () => {
     })
 
     it('leaves the claim incomplete when the transaction rolls back', async () => {
-        stripeConstructEvent.mockReturnValue(evt('payment_intent.succeeded'))
         prisma.$transaction.mockRejectedValueOnce(new Error('deadlock detected'))
 
-        expect((await read(await stripeApi.POST(hook()))).status).toBe(500)
+        expect((await read(await razorpayApi.POST(hook()))).status).toBe(500)
         // The rollback took the completion mark with it, so the next delivery
         // reprocesses rather than short-circuiting.
         expect(prisma.processedWebhookEvent.update).not.toHaveBeenCalled()
     })
 
-    it('does not call Stripe again for an event already completed', async () => {
-        stripeConstructEvent.mockReturnValue(evt('payment_intent.succeeded'))
-        prisma.processedWebhookEvent.create.mockRejectedValue(Object.assign(new Error('dup'), { code: 'P2002' }))
-        prisma.processedWebhookEvent.findUnique.mockResolvedValue({ id: 'evt_1', completedAt: new Date() })
-
-        const { body } = await read(await stripeApi.POST(hook()))
-        expect(body.duplicate).toBe(true)
-        expect(stripeListSessions).not.toHaveBeenCalled()
-        expect(prisma.$transaction).not.toHaveBeenCalled()
-    })
-
     it('reprocesses when the claim row cannot be read back', async () => {
         // Defensive: a vanished row must fall through to reprocessing, never to
         // silently dropping the event.
-        stripeConstructEvent.mockReturnValue(evt('payment_intent.succeeded'))
         prisma.processedWebhookEvent.create.mockRejectedValue(Object.assign(new Error('dup'), { code: 'P2002' }))
         prisma.processedWebhookEvent.findUnique.mockResolvedValue(null)
-
-        expect((await read(await stripeApi.POST(hook()))).status).toBe(200)
+        expect((await read(await razorpayApi.POST(hook()))).status).toBe(200)
         expect(prisma.order.updateMany).toHaveBeenCalled()
     })
 
-    it('confirms payment even when the buyer row does not exist yet', async () => {
-        // The Clerk -> Inngest sync is asynchronous. Clearing a cart that is not
-        // there must not roll back the payment confirmation.
-        stripeConstructEvent.mockReturnValue(evt('payment_intent.succeeded'))
-        prisma.user.updateMany.mockResolvedValue({ count: 0 })
-        // What `update` would do here, so this test fails if the cart clear ever
-        // goes back to a call that throws on a missing row.
-        prisma.user.update.mockRejectedValue(Object.assign(new Error('not found'), { code: 'P2025' }))
-
-        expect((await read(await stripeApi.POST(hook()))).status).toBe(200)
-        expect(prisma.order.updateMany).toHaveBeenCalledWith({ where: { id: { in: ['o1', 'o2'] } }, data: { isPaid: true } })
-        expect(prisma.processedWebhookEvent.update).toHaveBeenCalled()
+    it('acknowledges an event type it does not act on', async () => {
+        const { status } = await read(await razorpayApi.POST(hook('payment_link.partially_paid')))
+        expect(status).toBe(200)
+        expect(prisma.order.updateMany).not.toHaveBeenCalled()
+        expect(prisma.order.deleteMany).not.toHaveBeenCalled()
     })
 
-    it('retries rather than completing when the session cannot be found', async () => {
-        // A session that is merely not visible yet is indistinguishable from one
-        // that never existed. Completing the claim would drop the payment.
-        stripeConstructEvent.mockReturnValue(evt('payment_intent.succeeded'))
-        prisma.processedWebhookEvent.create.mockResolvedValue({})
-        stripeListSessions.mockResolvedValue({ data: [] })
-
-        const { status } = await read(await stripeApi.POST(hook()))
-        expect(status).toBe(500)
-        expect(prisma.processedWebhookEvent.update).not.toHaveBeenCalled()
-    })
-
-    it('survives missing metadata and unknown event types', async () => {
-        for (const [setup, type] of [
-            [() => stripeListSessions.mockResolvedValue({ data: [{ metadata: { appId: 'gocart' } }] }), 'payment_intent.succeeded'],
-            [() => {}, 'charge.refunded'],
-        ]) {
+    it('touches no order when the payload carries no usable notes', async () => {
+        // Built as whole entities, so the absent-notes case really is absent
+        // rather than defaulted back to a valid one.
+        const entities = [{ notes: { appId: 'gocart' } }, { notes: {} }, {}]
+        for (const entity of entities) {
             vi.clearAllMocks()
             prisma.processedWebhookEvent.create.mockResolvedValue({})
-            stripeListSessions.mockResolvedValue({ data: [{ metadata: META }] })
-            setup()
-            stripeConstructEvent.mockReturnValue(evt(type))
-            expect((await read(await stripeApi.POST(hook()))).status).toBe(200)
+            const payload = { event: 'payment_link.paid', payload: { payment_link: { entity: { id: 'plink_1', ...entity } } } }
+            expect((await read(await razorpayApi.POST(signed(payload)))).status).toBe(200)
             expect(prisma.order.updateMany).not.toHaveBeenCalled()
         }
     })
@@ -1007,86 +1010,96 @@ describe('integration: scheduled reconciliation and retention', () => {
         [Symbol.asyncIterator]: async function* () { for (const i of items) yield i },
     })
 
-    describe('reconcileStripePayments', () => {
+    describe('reconcileRazorpayPayments', () => {
+        const link = (o = {}) => ({
+            id: 'plink_1',
+            status: 'paid',
+            notes: { orderIds: 'o1', userId: 'u1', appId: 'gocart' },
+            ...o,
+        })
+        const page = (links) => razorpayListLinks.mockResolvedValue({ payment_links: links })
+
         beforeEach(() => {
-            process.env.STRIPE_SECRET_KEY = 'sk_test_x'
+            process.env.RAZORPAY_KEY_ID = 'rzp_test_x'
+            process.env.RAZORPAY_KEY_SECRET = 'secret'
             prisma.order.updateMany.mockResolvedValue({ count: 0 })
-            prisma.user.updateMany.mockResolvedValue({ count: 1 })
         })
 
-        it('marks an order paid that Stripe charged but the webhook never recorded', async () => {
-            stripeListPaymentIntents.mockReturnValue(asyncList([{ id: 'pi_1', status: 'succeeded' }]))
-            stripeListSessions.mockResolvedValue({
-                data: [{ metadata: { orderIds: 'o1,o2', userId: 'u1', appId: 'gocart' } }],
-            })
+        it('marks an order paid that Razorpay charged but the webhook never recorded', async () => {
+            page([link({ notes: { orderIds: 'o1,o2', userId: 'u1', appId: 'gocart' } })])
             prisma.order.updateMany.mockResolvedValue({ count: 2 })
 
-            const result = await jobs.reconcileStripePayments.handler({ step })
+            const result = await jobs.reconcileRazorpayPayments.handler({ step })
 
             expect(prisma.order.updateMany).toHaveBeenCalledWith({
                 where: { id: { in: ['o1', 'o2'] }, isPaid: false },
                 data: { isPaid: true },
             })
-            expect(prisma.user.updateMany).toHaveBeenCalledWith({ where: { id: 'u1' }, data: { cart: {} } })
-            expect(result.repaired).toBe(1)
+            expect(result).toEqual({ repaired: 1 })
         })
 
-        it('reports a repair loudly, because it should never be routine', async () => {
-            stripeListPaymentIntents.mockReturnValue(asyncList([{ id: 'pi_1', status: 'succeeded' }]))
-            stripeListSessions.mockResolvedValue({ data: [{ metadata: { orderIds: 'o1', userId: 'u1', appId: 'gocart' } }] })
+        it('clears the cart of the shopper whose payment it repaired', async () => {
+            page([link()])
             prisma.order.updateMany.mockResolvedValue({ count: 1 })
-
-            await jobs.reconcileStripePayments.handler({ step })
-
-            const logged = console.error.mock.calls
-                .map(c => { try { return JSON.parse(c[0]) } catch { return null } })
-                .find(l => l?.event === 'payments_reconciled')
-            expect(logged.repairedCount).toBe(1)
+            await jobs.reconcileRazorpayPayments.handler({ step })
+            expect(prisma.user.updateMany).toHaveBeenCalledWith({ where: { id: 'u1' }, data: { cart: {} } })
         })
 
-        it('touches nothing when every payment was already recorded', async () => {
-            stripeListPaymentIntents.mockReturnValue(asyncList([{ id: 'pi_1', status: 'succeeded' }]))
-            stripeListSessions.mockResolvedValue({ data: [{ metadata: { orderIds: 'o1', userId: 'u1', appId: 'gocart' } }] })
-            prisma.order.updateMany.mockResolvedValue({ count: 0 })   // already paid
-
-            const result = await jobs.reconcileStripePayments.handler({ step })
-            expect(result.repaired).toBe(0)
+        it('reports nothing repaired when the webhook already did the work', async () => {
+            page([link()])
+            // updateMany matched no unpaid row: the webhook got there first.
+            prisma.order.updateMany.mockResolvedValue({ count: 0 })
+            const result = await jobs.reconcileRazorpayPayments.handler({ step })
+            expect(result).toEqual({ repaired: 0 })
             expect(prisma.user.updateMany).not.toHaveBeenCalled()
         })
 
         it('only ever moves an order from unpaid to paid', async () => {
-            // Idempotent and narrow, so racing the webhook is harmless.
-            stripeListPaymentIntents.mockReturnValue(asyncList([{ id: 'pi_1', status: 'succeeded' }]))
-            stripeListSessions.mockResolvedValue({ data: [{ metadata: { orderIds: 'o1', userId: 'u1', appId: 'gocart' } }] })
-            await jobs.reconcileStripePayments.handler({ step })
+            page([link()])
+            await jobs.reconcileRazorpayPayments.handler({ step })
             expect(prisma.order.updateMany.mock.calls[0][0].where.isPaid).toBe(false)
         })
 
-        it('ignores intents that did not succeed', async () => {
-            stripeListPaymentIntents.mockReturnValue(asyncList([
-                { id: 'pi_1', status: 'requires_payment_method' },
-                { id: 'pi_2', status: 'canceled' },
-            ]))
-            await jobs.reconcileStripePayments.handler({ step })
-            expect(stripeListSessions).not.toHaveBeenCalled()
+        it('ignores links that were never paid', async () => {
+            page([link({ status: 'created' }), link({ id: 'plink_2', status: 'cancelled' })])
+            await jobs.reconcileRazorpayPayments.handler({ step })
             expect(prisma.order.updateMany).not.toHaveBeenCalled()
         })
 
-        it('ignores sessions belonging to another app sharing the Stripe account', async () => {
-            stripeListPaymentIntents.mockReturnValue(asyncList([{ id: 'pi_1', status: 'succeeded' }]))
-            stripeListSessions.mockResolvedValue({ data: [{ metadata: { orderIds: 'o1', userId: 'u1', appId: 'other' } }] })
-            await jobs.reconcileStripePayments.handler({ step })
+        it('ignores links belonging to another app sharing the Razorpay account', async () => {
+            page([link({ notes: { orderIds: 'o1', userId: 'u1', appId: 'other' } })])
+            await jobs.reconcileRazorpayPayments.handler({ step })
             expect(prisma.order.updateMany).not.toHaveBeenCalled()
         })
 
-        it('survives an intent with no session at all', async () => {
-            stripeListPaymentIntents.mockReturnValue(asyncList([{ id: 'pi_1', status: 'succeeded' }]))
-            stripeListSessions.mockResolvedValue({ data: [] })
-            await expect(jobs.reconcileStripePayments.handler({ step })).resolves.toEqual({ repaired: 0 })
+        it('survives a link carrying no notes at all', async () => {
+            page([link({ notes: undefined })])
+            await expect(jobs.reconcileRazorpayPayments.handler({ step })).resolves.toEqual({ repaired: 0 })
+        })
+
+        it('walks past the first page rather than repairing only the newest 100', async () => {
+            // A full page means there may be more; a short one ends the walk.
+            const full = Array.from({ length: 100 }, (_, i) => link({ id: `plink_${i}`, status: 'created' }))
+            razorpayListLinks
+                .mockResolvedValueOnce({ payment_links: full })
+                .mockResolvedValueOnce({ payment_links: [link()] })
+            prisma.order.updateMany.mockResolvedValue({ count: 1 })
+
+            const result = await jobs.reconcileRazorpayPayments.handler({ step })
+
+            expect(razorpayListLinks).toHaveBeenCalledTimes(2)
+            expect(razorpayListLinks.mock.calls[1][0].skip).toBe(100)
+            expect(result).toEqual({ repaired: 1 })
+        })
+
+        it('stops after a short page', async () => {
+            page([link({ status: 'created' })])
+            await jobs.reconcileRazorpayPayments.handler({ step })
+            expect(razorpayListLinks).toHaveBeenCalledTimes(1)
         })
 
         it('runs on a schedule rather than waiting to be asked', () => {
-            expect(jobs.reconcileStripePayments.trigger.cron).toBeTruthy()
+            expect(jobs.reconcileRazorpayPayments.trigger.cron).toBeTruthy()
         })
     })
 
@@ -1108,7 +1121,7 @@ describe('integration: scheduled reconciliation and retention', () => {
             await jobs.pruneCheckoutArtifacts.handler({ step })
             const { where } = prisma.order.deleteMany.mock.calls[0][0]
             expect(where.isPaid).toBe(false)
-            expect(where.paymentMethod).toBe('STRIPE')
+            expect(where.paymentMethod).toEqual({ in: ['STRIPE', 'RAZORPAY'] })
             // Far older than the reconciliation window, so a payment still
             // awaiting repair is never destroyed.
             expect(Date.now() - where.createdAt.lt.getTime()).toBeGreaterThan(29 * 86400000)
@@ -1157,18 +1170,18 @@ describe('integration: residual correctness gaps', () => {
         expect(eligibility.where).toMatchObject(PLACED_ORDER)
     })
 
-    // #34 — Stripe rejects a zero-amount session, so a full-value coupon failed.
+    // #34 — a provider rejects a zero-amount request, so a full-value coupon failed.
     it('settles a zero-total basket instead of opening an impossible payment page', async () => {
         asShopper('u1', true)                                   // member: no shipping
         prisma.coupon.findFirst.mockResolvedValue({ code: 'FREE', discount: 100, forNewUser: false, forMember: false, maxRedemptions: null })
 
         const { status, body: res } = await read(await orders.POST(json(body({
-            paymentMethod: 'STRIPE', couponCode: 'FREE',
+            paymentMethod: 'RAZORPAY', couponCode: 'FREE',
         }))))
 
         expect(status).toBe(200)
         expect(res.message).toBe('Orders Placed Successfully')
-        expect(stripeCreateSession).not.toHaveBeenCalled()
+        expect(razorpayCreateLink).not.toHaveBeenCalled()
         // Nothing is owed, so the order is settled and the cart cleared.
         expect(prisma.order.updateMany).toHaveBeenCalledWith({
             where: { id: { in: ['o1'] } }, data: { isPaid: true },
@@ -1176,10 +1189,10 @@ describe('integration: residual correctness gaps', () => {
     })
 
     it('still opens a payment page when anything is owed', async () => {
-        stripeCreateSession.mockResolvedValue({ url: 'https://stripe.test/s/1' })
-        const { status } = await read(await orders.POST(json(body({ paymentMethod: 'STRIPE' }))))
+        razorpayCreateLink.mockResolvedValue({ id: 'plink_1', short_url: 'https://rzp.test/i/1' })
+        const { status } = await read(await orders.POST(json(body({ paymentMethod: 'RAZORPAY' }))))
         expect(status).toBe(200)
-        expect(stripeCreateSession).toHaveBeenCalled()
+        expect(razorpayCreateLink).toHaveBeenCalled()
     })
 
     // #58 — a key was honoured whoever presented it.
@@ -1508,7 +1521,7 @@ describe('integration: a review needs a delivery, a coupon needs a redemption le
         })
 
         it('counts only orders that actually stand', async () => {
-            // An abandoned Stripe checkout must not burn the shopper's coupon.
+            // An abandoned online checkout must not burn the shopper's coupon.
             await orders.POST(json(body))
             const { where } = prisma.order.findFirst.mock.calls[0][0]
             expect(where.userId).toBe('u1')
@@ -1809,7 +1822,7 @@ describe('integration: the amount charged is the sum of the orders placed', () =
         prisma.order.findMany.mockResolvedValue([])
         prisma.user.updateMany.mockResolvedValue({ count: 1 })
         prisma.order.create.mockImplementation(async ({ data }) => ({ id: `o${data.storeId}` }))
-        stripeCreateSession.mockResolvedValue({ url: 'https://stripe.test/s/1' })
+        razorpayCreateLink.mockResolvedValue({ id: 'plink_1', short_url: 'https://rzp.test/i/1' })
     })
 
     const twoStoresAt = (price) => {
@@ -1820,17 +1833,17 @@ describe('integration: the amount charged is the sum of the orders placed', () =
         return { addressId: 'addr_1', items: [{ id: 'p1', quantity: 1 }, { id: 'p2', quantity: 1 }] }
     }
 
-    it('charges Stripe exactly the sum of the persisted order totals', async () => {
+    it('charges the provider exactly the sum of the persisted order totals', async () => {
         // $10.01 in two stores at 50%: each rounds to 500, so the basket is
         // 1000. Discounting as a whole gives 1001. A member, so no shipping.
         asShopper('u1', true)
         const basket = twoStoresAt(10.01)
         prisma.coupon.findFirst.mockResolvedValue({ code: 'HALF', discount: 50, forNewUser: false, forMember: false })
 
-        await orders.POST(json({ ...basket, paymentMethod: 'STRIPE', couponCode: 'HALF' }))
+        await orders.POST(json({ ...basket, paymentMethod: 'RAZORPAY', couponCode: 'HALF' }))
 
         const persisted = prisma.order.create.mock.calls.map(c => c[0].data.total)
-        const charged = stripeCreateSession.mock.calls[0][0].line_items[0].price_data.unit_amount
+        const charged = razorpayCreateLink.mock.calls[0][0].amount
         expect(persisted).toEqual([5, 5])
         expect(charged).toBe(1000)
         // The invariant: never a re-derivation, always the same integers.
@@ -1845,14 +1858,14 @@ describe('integration: the amount charged is the sum of the orders placed', () =
             prisma.order.findMany.mockResolvedValue([])
             prisma.user.updateMany.mockResolvedValue({ count: 1 })
             prisma.order.create.mockImplementation(async ({ data }) => ({ id: `o${data.storeId}` }))
-            stripeCreateSession.mockResolvedValue({ url: 'u' })
+            razorpayCreateLink.mockResolvedValue({ id: 'plink_1', short_url: 'u' })
             const basket = twoStoresAt(price)
             prisma.coupon.findFirst.mockResolvedValue({ code: 'C', discount, forNewUser: false, forMember: false })
 
-            await orders.POST(json({ ...basket, paymentMethod: 'STRIPE', ...(discount ? { couponCode: 'C' } : {}) }))
+            await orders.POST(json({ ...basket, paymentMethod: 'RAZORPAY', ...(discount ? { couponCode: 'C' } : {}) }))
 
             const persisted = prisma.order.create.mock.calls.map(c => c[0].data.total)
-            const charged = stripeCreateSession.mock.calls[0][0].line_items[0].price_data.unit_amount
+            const charged = razorpayCreateLink.mock.calls[0][0].amount
             expect(charged, `price ${price} discount ${discount}`)
                 .toBe(Math.round(persisted.reduce((a, b) => a + b, 0) * 100))
             expect(Number.isInteger(charged)).toBe(true)
@@ -1892,7 +1905,7 @@ describe('integration: a repeated checkout submission produces one basket', () =
         prisma.checkoutRequest.findUnique.mockResolvedValue(null)
         prisma.checkoutRequest.create.mockResolvedValue({})
         prisma.checkoutRequest.update.mockResolvedValue({})
-        stripeCreateSession.mockResolvedValue({ url: 'https://stripe.test/s/1' })
+        razorpayCreateLink.mockResolvedValue({ id: 'plink_1', short_url: 'https://rzp.test/i/1' })
     })
 
     it('places the order and records the submission on the first request', async () => {
@@ -1916,30 +1929,30 @@ describe('integration: a repeated checkout submission produces one basket', () =
     })
 
     it('returns the same payment page rather than opening a second one', async () => {
-        // Two Stripe sessions for one basket is two chances to be charged.
+        // Two payment links for one basket is two chances to be charged.
         prisma.checkoutRequest.findUnique.mockResolvedValue({
-            key: KEY, userId: 'u1', orderIds: ['o1'], paymentMethod: 'STRIPE',
-            sessionUrl: 'https://stripe.test/s/original',
+            key: KEY, userId: 'u1', orderIds: ['o1'], paymentMethod: 'RAZORPAY',
+            sessionUrl: 'https://rzp.test/i/original',
         })
-        const { body: res } = await read(await orders.POST(withKey(body({ paymentMethod: 'STRIPE' }))))
+        const { body: res } = await read(await orders.POST(withKey(body({ paymentMethod: 'RAZORPAY' }))))
 
-        expect(res.session.url).toBe('https://stripe.test/s/original')
-        expect(stripeCreateSession).not.toHaveBeenCalled()
+        expect(res.session.url).toBe('https://rzp.test/i/original')
+        expect(razorpayCreateLink).not.toHaveBeenCalled()
     })
 
     it('records the payment page so the replay has something to return', async () => {
-        await orders.POST(withKey(body({ paymentMethod: 'STRIPE' })))
+        await orders.POST(withKey(body({ paymentMethod: 'RAZORPAY' })))
         expect(prisma.checkoutRequest.update).toHaveBeenCalledWith({
             where: { key: KEY },
-            data: { sessionUrl: 'https://stripe.test/s/1' },
+            data: { sessionUrl: 'https://rzp.test/i/1' },
         })
     })
 
     it('refuses to guess while the first request is still creating the session', async () => {
         prisma.checkoutRequest.findUnique.mockResolvedValue({
-            key: KEY, userId: 'u1', orderIds: ['o1'], paymentMethod: 'STRIPE', sessionUrl: null,
+            key: KEY, userId: 'u1', orderIds: ['o1'], paymentMethod: 'RAZORPAY', sessionUrl: null,
         })
-        const { status } = await read(await orders.POST(withKey(body({ paymentMethod: 'STRIPE' }))))
+        const { status } = await read(await orders.POST(withKey(body({ paymentMethod: 'RAZORPAY' }))))
         expect(status).toBe(409)
     })
 
@@ -1959,13 +1972,13 @@ describe('integration: a repeated checkout submission produces one basket', () =
         expect(prisma.checkoutRequest.update).not.toHaveBeenCalled()
     })
 
-    it('releases the claim when the stripe session cannot be created', async () => {
+    it('releases the claim when the payment link cannot be created', async () => {
         // Otherwise the retry replays orders the compensation has deleted.
-        stripeCreateSession.mockRejectedValue(new Error('stripe down'))
+        razorpayCreateLink.mockRejectedValue(new Error('razorpay down'))
         prisma.order.deleteMany.mockResolvedValue({ count: 1 })
         prisma.checkoutRequest.delete.mockResolvedValue({})
 
-        await orders.POST(withKey(body({ paymentMethod: 'STRIPE' })))
+        await orders.POST(withKey(body({ paymentMethod: 'RAZORPAY' })))
         expect(prisma.checkoutRequest.delete).toHaveBeenCalledWith({ where: { key: KEY } })
     })
 
@@ -2230,32 +2243,35 @@ describe('integration: the application can be observed', () => {
         })
 
         it('records a payment as an event that can be counted', async () => {
-            // §13 asks for Stripe's succeeded-payment count to be reconciled
+            // §13 asks for Razorpay's captured-payment count to be reconciled
             // against the application's. This is the application's side of it.
-            stripeConstructEvent.mockReturnValue({ id: 'evt_9', type: 'payment_intent.succeeded', data: { object: { id: 'pi_9' } } })
             prisma.processedWebhookEvent.create.mockResolvedValue({})
-            stripeListSessions.mockResolvedValue({ data: [{ metadata: { orderIds: 'o1,o2', userId: 'u1', appId: 'gocart' } }] })
 
-            await stripeApi.POST({ text: async () => '{}', headers: new Headers({ 'stripe-signature': 'sig' }) })
+            await razorpayApi.POST(signed({
+                event: 'payment_link.paid',
+                payload: { payment_link: { entity: { id: 'plink_9', notes: { orderIds: 'o1,o2', userId: 'u1', appId: 'gocart' } } } },
+            }, { eventId: 'evt_9' }))
 
             const processed = lines(console.log).find(l => l.event === 'webhook_processed')
             expect(processed).toMatchObject({ eventId: 'evt_9', markedPaid: true, orderIds: ['o1', 'o2'] })
         })
 
         it('records a suppressed duplicate delivery', async () => {
-            stripeConstructEvent.mockReturnValue({ id: 'evt_9', type: 'payment_intent.succeeded', data: { object: { id: 'pi_9' } } })
             prisma.processedWebhookEvent.create.mockRejectedValue(Object.assign(new Error('dup'), { code: 'P2002' }))
             prisma.processedWebhookEvent.findUnique.mockResolvedValue({ id: 'evt_9', completedAt: new Date() })
 
-            await stripeApi.POST({ text: async () => '{}', headers: new Headers({ 'stripe-signature': 'sig' }) })
+            await razorpayApi.POST(signed({
+                event: 'payment_link.paid',
+                payload: { payment_link: { entity: { id: 'plink_9', notes: { orderIds: 'o1,o2', userId: 'u1', appId: 'gocart' } } } },
+            }, { eventId: 'evt_9' }))
 
             expect(lines(console.log).some(l => l.event === 'webhook_duplicate')).toBe(true)
         })
 
         it('records a refused card checkout as an error, not a silent 503', async () => {
-            delete process.env.STRIPE_WEBHOOK_SECRET
+            delete process.env.RAZORPAY_WEBHOOK_SECRET
             asShopper('u1')
-            await orders.POST(json({ addressId: 'a1', items: [{ id: 'p1', quantity: 1 }], paymentMethod: 'STRIPE' }))
+            await orders.POST(json({ addressId: 'a1', items: [{ id: 'p1', quantity: 1 }], paymentMethod: 'RAZORPAY' }))
             expect(lines(console.error).some(l => l.event === 'card_checkout_refused')).toBe(true)
         })
 
@@ -2364,7 +2380,7 @@ describe('integration: coupons cannot be written or priced out of range', () => 
 // leaving a window in which card payments could never be confirmed.
 describe('integration: card checkout is refused when it cannot be confirmed', () => {
     const body = (over = {}) => ({
-        addressId: 'addr_1', items: [{ id: 'p1', quantity: 1 }], paymentMethod: 'STRIPE', ...over,
+        addressId: 'addr_1', items: [{ id: 'p1', quantity: 1 }], paymentMethod: 'RAZORPAY', ...over,
     })
 
     beforeEach(() => {
@@ -2374,42 +2390,42 @@ describe('integration: card checkout is refused when it cannot be confirmed', ()
         prisma.order.findMany.mockResolvedValue([])
         prisma.order.create.mockResolvedValue({ id: 'o1' })
         prisma.user.updateMany.mockResolvedValue({ count: 1 })
-        stripeCreateSession.mockResolvedValue({ url: 'https://stripe.test/s/1' })
-        process.env.STRIPE_WEBHOOK_SECRET = 'whsec_test'
+        razorpayCreateLink.mockResolvedValue({ id: 'plink_1', short_url: 'https://rzp.test/i/1' })
+        process.env.RAZORPAY_WEBHOOK_SECRET = WEBHOOK_SECRET
     })
 
-    it('refuses a STRIPE order when the webhook secret is unset', async () => {
-        delete process.env.STRIPE_WEBHOOK_SECRET
+    it('refuses an online order when the webhook secret is unset', async () => {
+        delete process.env.RAZORPAY_WEBHOOK_SECRET
         const { status, body: res } = await read(await orders.POST(json(body())))
         expect(status).toBe(503)
         expect(res.error).toMatch(/temporarily unavailable/i)
     })
 
-    it('creates no order and calls Stripe not at all when refusing', async () => {
+    it('creates no order and calls the provider not at all when refusing', async () => {
         // The point is to take no money and leave no trace, not to fail late.
-        delete process.env.STRIPE_WEBHOOK_SECRET
+        delete process.env.RAZORPAY_WEBHOOK_SECRET
         await orders.POST(json(body()))
         expect(prisma.order.create).not.toHaveBeenCalled()
         expect(prisma.$transaction).not.toHaveBeenCalled()
-        expect(stripeCreateSession).not.toHaveBeenCalled()
+        expect(razorpayCreateLink).not.toHaveBeenCalled()
     })
 
     it('still accepts cash on delivery while card payment is unavailable', async () => {
         // Refusing cards must not take the whole storefront down with it.
-        delete process.env.STRIPE_WEBHOOK_SECRET
+        delete process.env.RAZORPAY_WEBHOOK_SECRET
         const { status, body: res } = await read(await orders.POST(json(body({ paymentMethod: 'COD' }))))
         expect(status).toBe(200)
         expect(res.message).toBe('Orders Placed Successfully')
     })
 
-    it('allows a STRIPE order once the secret is configured', async () => {
+    it('allows an online order once the secret is configured', async () => {
         const { status, body: res } = await read(await orders.POST(json(body())))
         expect(status).toBe(200)
-        expect(res.session.url).toBe('https://stripe.test/s/1')
+        expect(res.session.url).toBe('https://rzp.test/i/1')
     })
 
     it('refuses an empty-string secret, not just an absent one', async () => {
-        process.env.STRIPE_WEBHOOK_SECRET = ''
+        process.env.RAZORPAY_WEBHOOK_SECRET = ''
         expect((await read(await orders.POST(json(body())))).status).toBe(503)
     })
 })
@@ -2471,20 +2487,20 @@ describe('integration: a basket commits as one unit', () => {
         expect(prisma.user.update).not.toHaveBeenCalled()
     })
 
-    it('keeps a stripe cart intact until the webhook confirms payment', async () => {
-        stripeCreateSession.mockResolvedValue({ url: 'https://stripe.test/s/1' })
-        const { status } = await read(await orders.POST(json({ ...twoStoreBody, paymentMethod: 'STRIPE' })))
+    it('keeps the cart intact until the webhook confirms payment', async () => {
+        razorpayCreateLink.mockResolvedValue({ id: 'plink_1', short_url: 'https://rzp.test/i/1' })
+        const { status } = await read(await orders.POST(json({ ...twoStoreBody, paymentMethod: 'RAZORPAY' })))
         expect(status).toBe(200)
         expect(prisma.user.updateMany).not.toHaveBeenCalled()
     })
 
-    it('undoes the orders when the stripe session cannot be created', async () => {
+    it('undoes the orders when the payment link cannot be created', async () => {
         // Otherwise the basket becomes orders the buyer was never given a way
         // to pay for, invisible to them and permanent.
-        stripeCreateSession.mockRejectedValue(new Error('stripe unavailable'))
+        razorpayCreateLink.mockRejectedValue(new Error('razorpay unavailable'))
         prisma.order.deleteMany.mockResolvedValue({ count: 2 })
 
-        const { status } = await read(await orders.POST(json({ ...twoStoreBody, paymentMethod: 'STRIPE' })))
+        const { status } = await read(await orders.POST(json({ ...twoStoreBody, paymentMethod: 'RAZORPAY' })))
         expect(status).toBe(500)
         expect(prisma.order.deleteMany).toHaveBeenCalledWith({
             where: { id: { in: ['o1', 'o2'] }, isPaid: false },
@@ -2492,16 +2508,16 @@ describe('integration: a basket commits as one unit', () => {
     })
 
     it('never deletes an order that has been paid during cleanup', async () => {
-        stripeCreateSession.mockRejectedValue(new Error('stripe unavailable'))
+        razorpayCreateLink.mockRejectedValue(new Error('razorpay unavailable'))
         prisma.order.deleteMany.mockResolvedValue({ count: 0 })
-        await read(await orders.POST(json({ ...twoStoreBody, paymentMethod: 'STRIPE' })))
+        await read(await orders.POST(json({ ...twoStoreBody, paymentMethod: 'RAZORPAY' })))
         expect(prisma.order.deleteMany.mock.calls[0][0].where.isPaid).toBe(false)
     })
 
     it('still reports the original failure if cleanup itself fails', async () => {
-        stripeCreateSession.mockRejectedValue(new Error('stripe unavailable'))
+        razorpayCreateLink.mockRejectedValue(new Error('razorpay unavailable'))
         prisma.order.deleteMany.mockRejectedValue(new Error('database gone'))
-        const { status } = await read(await orders.POST(json({ ...twoStoreBody, paymentMethod: 'STRIPE' })))
+        const { status } = await read(await orders.POST(json({ ...twoStoreBody, paymentMethod: 'RAZORPAY' })))
         expect(status).toBe(500)
     })
 })
@@ -2758,11 +2774,11 @@ describe('integration: buyer and seller agree on which orders count', () => {
         }
     })
 
-    it('counts a COD order but not an unconfirmed stripe one', () => {
+    it('counts a COD order but not an unconfirmed online one', () => {
         // The predicate's meaning, asserted directly rather than through a query.
-        const [cod, stripePaid] = PLACED_ORDER.OR
+        const [cod, onlinePaid] = PLACED_ORDER.OR
         expect(cod).toEqual({ paymentMethod: 'COD' })
-        expect(stripePaid).toEqual({ AND: [{ paymentMethod: 'STRIPE' }, { isPaid: true }] })
+        expect(onlinePaid).toEqual({ AND: [{ paymentMethod: { in: ['STRIPE', 'RAZORPAY'] } }, { isPaid: true }] })
     })
 })
 
@@ -2778,9 +2794,9 @@ describe('integration: sellers act only on their own store', () => {
         expect(prisma.order.findMany.mock.calls[0][0].where.storeId).toBe('store_1')
     })
 
-    // F-04. Earnings summed the raw order table, so an abandoned Stripe checkout
+    // F-04. Earnings summed the raw order table, so an abandoned online checkout
     // counted as money the seller had made.
-    it('excludes unpaid stripe orders from earnings and the order count', async () => {
+    it('excludes unpaid online orders from earnings and the order count', async () => {
         const { where } = await (async () => {
             prisma.order.findMany.mockResolvedValue([])
             prisma.product.findMany.mockResolvedValue([])
@@ -2814,8 +2830,8 @@ describe('integration: sellers act only on their own store', () => {
     })
 
     // F-03. The seller list once had no payment predicate at all, so every
-    // abandoned Stripe checkout showed up as an order to pack and ship.
-    it('hides unpaid stripe orders from the seller order list', async () => {
+    // abandoned online checkout showed up as an order to pack and ship.
+    it('hides unpaid online orders from the seller order list', async () => {
         prisma.order.findMany.mockResolvedValue([])
         await storeOrders.GET(url(`${ORIGIN}/api/store/orders`))
         const { where } = prisma.order.findMany.mock.calls[0][0]
@@ -2823,7 +2839,7 @@ describe('integration: sellers act only on their own store', () => {
         expect(where).toMatchObject(PLACED_ORDER)
     })
 
-    it('refuses to advance the status of an unpaid stripe order', async () => {
+    it('refuses to advance the status of an unpaid online order', async () => {
         // No row matches once the payment predicate is applied, so the
         // transaction finds nothing and never reaches the write at all.
         prisma.order.updateMany.mockResolvedValue({ count: 0 })
@@ -2961,7 +2977,7 @@ describe('integration: admin operations', () => {
 
     // F-04. Platform revenue counted every row in the order table, so it was
     // inflated by the checkout abandonment rate.
-    it('excludes unpaid stripe orders from revenue, the count and the chart', async () => {
+    it('excludes unpaid online orders from revenue, the count and the chart', async () => {
         prisma.order.aggregate.mockResolvedValue({ _sum: { total: 0 }, _count: 0 })
         prisma.store.count.mockResolvedValue(0)
         prisma.product.count.mockResolvedValue(0)

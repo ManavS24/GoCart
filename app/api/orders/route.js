@@ -10,7 +10,8 @@ import { getAuth } from "@clerk/nextjs/server";
 import { PaymentMethod } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/apiError";
-import Stripe from "stripe";
+import Razorpay from "razorpay";
+import { ACTIVE_ONLINE_METHOD, isOnlineMethod } from "@/lib/onlinePayment";
 
 
 // What a repeated submission gets back: the original outcome, never a second one.
@@ -72,9 +73,9 @@ export async function POST(request){
         }
 
         // Never start a payment that cannot be confirmed: without the secret
-        // /api/stripe rejects every delivery and the charge is never recorded.
-        if(paymentMethod === PaymentMethod.STRIPE && !process.env.STRIPE_WEBHOOK_SECRET){
-            logger.error('card_checkout_refused', { reason: 'STRIPE_WEBHOOK_SECRET is not set' })
+        // /api/razorpay rejects every delivery and the charge is never recorded.
+        if(isOnlineMethod(paymentMethod) && !process.env.RAZORPAY_WEBHOOK_SECRET){
+            logger.error('card_checkout_refused', { reason: 'RAZORPAY_WEBHOOK_SECRET is not set' })
             return NextResponse.json(
                 { error: "Card payment is temporarily unavailable. Please choose cash on delivery." },
                 { status: 503 }
@@ -216,7 +217,7 @@ export async function POST(request){
             }
 
             // COD is complete on commit. updateMany cannot fail on a missing row.
-            if(paymentMethod !== 'STRIPE'){
+            if(!isOnlineMethod(paymentMethod)){
                 await tx.user.updateMany({
                     where: {id: userId},
                     data: {cart : {}}
@@ -238,9 +239,9 @@ export async function POST(request){
 
          if(orderIds.replay) return orderIds.replay
 
-         // Stripe rejects a zero-amount session, so a basket that costs nothing
-         // is settled here rather than sent to a payment page.
-         if(paymentMethod === 'STRIPE' && fullAmountCents === 0){
+         // A payment provider rejects a zero-amount request, so a basket that
+         // costs nothing is settled here rather than sent to a payment page.
+         if(isOnlineMethod(paymentMethod) && fullAmountCents === 0){
             await prisma.order.updateMany({
                 where: { id: { in: orderIds } },
                 data: { isPaid: true },
@@ -250,8 +251,11 @@ export async function POST(request){
             return NextResponse.json({ message: 'Orders Placed Successfully' })
          }
 
-         if(paymentMethod === 'STRIPE'){
-            const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
+         if(isOnlineMethod(paymentMethod)){
+            const razorpay = new Razorpay({
+                key_id: process.env.RAZORPAY_KEY_ID,
+                key_secret: process.env.RAZORPAY_KEY_SECRET,
+            })
             // The Origin header is absent on some clients.
             const origin = request.headers.get('origin') || request.nextUrl.origin
 
@@ -259,28 +263,26 @@ export async function POST(request){
             // round trip exhausts the pool. Undone below if it fails.
             let session
             try {
-                session = await stripe.checkout.sessions.create({
-                    payment_method_types: ['card'],
-                    line_items: [{
-                        price_data:{
-                            currency: 'usd',
-                            product_data:{
-                                name: 'Order'
-                            },
-                            unit_amount: fullAmountCents
-                        },
-                        quantity: 1
-                    }],
-                    expires_at: Math.floor(Date.now() / 1000) + 30 * 60,
-                    mode: 'payment',
-                    success_url: `${origin}/loading?nextUrl=orders`,
-                    cancel_url: `${origin}/cart`,
-                    metadata: {
+                // A payment link, not the embedded widget: the flow is a
+                // redirect, so no third-party script has to be admitted
+                // through the CSP.
+                const link = await razorpay.paymentLink.create({
+                    amount: fullAmountCents,
+                    currency: 'INR',
+                    accept_partial: false,
+                    description: 'GoCart order',
+                    expire_by: Math.floor(Date.now() / 1000) + 30 * 60,
+                    callback_url: `${origin}/loading?nextUrl=orders`,
+                    callback_method: 'get',
+                    // Read straight back off the webhook payload, so confirming
+                    // a payment needs no second call to Razorpay.
+                    notes: {
                         orderIds: orderIds.join(','),
                         userId,
                         appId: 'gocart'
                     }
                 })
+                session = { id: link.id, url: link.short_url }
             } catch (error) {
                 // Unpaid-only, so a payment that landed meanwhile survives.
                 await prisma.order.deleteMany({

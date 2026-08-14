@@ -1,7 +1,8 @@
-import Stripe from 'stripe'
+import Razorpay from 'razorpay'
 import {inngest} from './client'
 import { logger } from '@/lib/logger'
 import prisma from '@/lib/prisma'
+import { ONLINE_PAYMENT_METHODS } from '@/lib/onlinePayment'
 
 export const syncUserCreation = inngest.createFunction(
     {id: 'sync-user-create'},
@@ -65,38 +66,54 @@ export const deleteCouponOnExpiry = inngest.createFunction(
 // Wider than the run interval, so a missed run leaves no gap.
 const RECONCILE_WINDOW_HOURS = 24
 
-// Repairs payments Stripe took that this application never recorded. Nothing in
-// the request path can detect that, because the request path is what failed.
-export const reconcileStripePayments = inngest.createFunction(
-    { id: 'reconcile-stripe-payments' },
+// Razorpay returns at most this many links per call.
+const RECONCILE_PAGE_SIZE = 100
+
+// Repairs payments Razorpay took that this application never recorded. Nothing
+// in the request path can detect that, because the request path is what failed.
+export const reconcileRazorpayPayments = inngest.createFunction(
+    { id: 'reconcile-razorpay-payments' },
     { cron: '15 * * * *' },
     async ({ step }) => {
         const since = Math.floor(Date.now() / 1000) - RECONCILE_WINDOW_HOURS * 3600
 
         const repaired = await step.run('repair-unconfirmed-payments', async () => {
-            const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
+            const razorpay = new Razorpay({
+                key_id: process.env.RAZORPAY_KEY_ID,
+                key_secret: process.env.RAZORPAY_KEY_SECRET,
+            })
             const results = []
 
-            // Stripe is the authority on what was charged.
-            for await (const intent of stripe.paymentIntents.list({ created: { gte: since }, limit: 100 })) {
-                if (intent.status !== 'succeeded') continue
-
-                const sessions = await stripe.checkout.sessions.list({ payment_intent: intent.id })
-                const metadata = sessions.data[0]?.metadata
-                if (!metadata || metadata.appId !== 'gocart' || !metadata.orderIds) continue
-
-                const orderIds = metadata.orderIds.split(',')
-
-                // Only unpaid rows change, so racing the webhook is harmless.
-                const { count } = await prisma.order.updateMany({
-                    where: { id: { in: orderIds }, isPaid: false },
-                    data: { isPaid: true },
+            // Razorpay is the authority on what was charged.
+            for (let skip = 0; ; skip += RECONCILE_PAGE_SIZE) {
+                const page = await razorpay.paymentLink.all({
+                    from: since,
+                    count: RECONCILE_PAGE_SIZE,
+                    skip,
                 })
+                const links = page?.payment_links ?? []
 
-                if (count > 0) {
-                    await prisma.user.updateMany({ where: { id: metadata.userId }, data: { cart: {} } })
-                    results.push({ paymentIntentId: intent.id, orderIds, count })
+                for (const link of links) {
+                    if (link.status !== 'paid') continue
+
+                    const notes = link.notes
+                    if (!notes || notes.appId !== 'gocart' || !notes.orderIds) continue
+
+                    const orderIds = notes.orderIds.split(',')
+
+                    // Only unpaid rows change, so racing the webhook is harmless.
+                    const { count } = await prisma.order.updateMany({
+                        where: { id: { in: orderIds }, isPaid: false },
+                        data: { isPaid: true },
+                    })
+
+                    if (count > 0) {
+                        await prisma.user.updateMany({ where: { id: notes.userId }, data: { cart: {} } })
+                        results.push({ paymentLinkId: link.id, orderIds, count })
+                    }
                 }
+
+                if (links.length < RECONCILE_PAGE_SIZE) break
             }
 
             return results
@@ -139,7 +156,7 @@ export const pruneCheckoutArtifacts = inngest.createFunction(
             // still awaiting repair is never destroyed.
             const { count } = await prisma.order.deleteMany({
                 where: {
-                    paymentMethod: 'STRIPE',
+                    paymentMethod: { in: ONLINE_PAYMENT_METHODS },
                     isPaid: false,
                     createdAt: { lt: cutoff(ABANDONED_ORDER_RETENTION_DAYS) },
                 },
