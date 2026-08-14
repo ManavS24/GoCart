@@ -1,4 +1,5 @@
 'use client'
+import { formatAmount } from '@/lib/formatPrice'
 import { StarIcon } from 'lucide-react'
 import Image from 'next/image'
 import Link from 'next/link'
@@ -29,7 +30,7 @@ const ProductCard = ({ product }) => {
                         ))}
                     </div>
                 </div>
-                <p>{currency}{product.price}</p>
+                <p>{currency}{formatAmount(product.price)}</p>
             </div>
         </Link>
     )

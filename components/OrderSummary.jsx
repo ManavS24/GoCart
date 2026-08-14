@@ -1,3 +1,4 @@
+import { formatAmount } from '@/lib/formatPrice'
 import { PlusIcon, SquarePenIcon, XIcon } from 'lucide-react';
 import { useRef, useState } from 'react'
 import AddressModal from './AddressModal';
@@ -156,9 +157,9 @@ const OrderSummary = ({ totalPrice, items }) => {
                         {coupon && <p>Coupon:</p>}
                     </div>
                     <div className='flex flex-col gap-1 font-medium text-right'>
-                        <p>{currency}{totalPrice.toLocaleString()}</p>
+                        <p>{currency}{formatAmount(totalPrice)}</p>
                         <p><Protect plan={'plus'} fallback={`${currency}5`}>Free</Protect></p>
-                        {coupon && <p>{`-${currency}${fromCents(discountCents).toFixed(2)}`}</p>}
+                        {coupon && <p>{`-${currency}${formatAmount(fromCents(discountCents))}`}</p>}
                     </div>
                 </div>
                 {
@@ -180,7 +181,7 @@ const OrderSummary = ({ totalPrice, items }) => {
                 <p>Total:</p>
                 <p className='font-medium text-right'>
                     <Protect plan={'plus'} fallback={`${currency}${fromCents(priceBasket({ items, discountPercent, chargeShipping: true }).totalCents).toFixed(2)}`}>
-                    {currency}{fromCents(discountedCents).toFixed(2)}
+                    {currency}{formatAmount(fromCents(discountedCents))}
                     </Protect>
                     </p>
             </div>

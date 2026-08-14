@@ -2,7 +2,7 @@ import upload_area from "./upload_area.svg"
 import hero_model_img from "./hero_model_img.png"
 import hero_product_img1 from "./hero_product_img1.png"
 import hero_product_img2 from "./hero_product_img2.png"
-import { ClockFadingIcon, HeadsetIcon, SendIcon } from "lucide-react";
+import { BadgeCheckIcon, LockIcon, SendIcon } from "lucide-react";
 
 export const assets = {
     upload_area,
@@ -11,10 +11,10 @@ export const assets = {
     hero_product_img2,
 }
 
-export const categories = ["Headphones", "Speakers", "Watch", "Earbuds", "Mouse", "Decoration"];
+export const categories = ["Headphones", "Speakers", "Watch", "Earbuds", "Mouse", "Accessories", "Home"];
 
 export const ourSpecsData = [
-    { title: "Free Shipping", description: "Enjoy fast, free delivery on every order no conditions, just reliable doorstep.", icon: SendIcon, accent: '#05DF72' },
-    { title: "7 Days easy Return", description: "Change your mind? No worries. Return any item within 7 days.", icon: ClockFadingIcon, accent: '#FF8904' },
-    { title: "24/7 Customer Support", description: "We're here for you. Get expert help with our customer support.", icon: HeadsetIcon, accent: '#A684FF' }
+    { title: "Free shipping on Plus", description: "Plus members pay no delivery charge on any order. Everyone else pays a flat fee per order.", icon: SendIcon, accent: '#05DF72' },
+    { title: "Verified sellers only", description: "Every store is reviewed and approved before a single product of theirs reaches the storefront.", icon: BadgeCheckIcon, accent: '#FF8904' },
+    { title: "Secure checkout", description: "Payments are handled by Razorpay. Card details are never seen by, or stored on, this site.", icon: LockIcon, accent: '#A684FF' }
 ]

@@ -216,3 +216,10 @@ model Store {
     Order   Order[]
     user    User      @relation(fields: [userId], references: [id])
 }
+
+// The email is the identity, so re-subscribing is an upsert rather than a
+// duplicate row.
+model NewsletterSubscriber {
+    email     String   @id
+    createdAt DateTime @default(now())
+}

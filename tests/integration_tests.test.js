@@ -11,6 +11,7 @@ const prisma = {
     address: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn() },
     coupon: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn(), delete: vi.fn() },
     processedWebhookEvent: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
+    newsletterSubscriber: { upsert: vi.fn() },
     checkoutRequest: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn(), delete: vi.fn() },
 }
 // The callback runs against the same double, so a statement issued through `tx`
@@ -70,6 +71,7 @@ const addressApi = await import('@/app/api/address/route')
 const couponApi = await import('@/app/api/coupon/route')
 const ratingApi = await import('@/app/api/rating/route')
 const productsApi = await import('@/app/api/products/route')
+const newsletterApi = await import('@/app/api/newsletter/route')
 const storeCreate = await import('@/app/api/store/create/route')
 const storeProduct = await import('@/app/api/store/product/route')
 const storeDashboard = await import('@/app/api/store/dashboard/route')
@@ -214,6 +216,7 @@ describe('integration: anonymous callers are refused everywhere', () => {
         '/api/health': healthApi,
         '/api/orders': orders,
         '/api/products': productsApi,
+        '/api/newsletter': newsletterApi,
         '/api/products/[productId]': productById,
         '/api/rating': ratingApi,
         '/api/store/ai': storeAi,
@@ -233,6 +236,7 @@ describe('integration: anonymous callers are refused everywhere', () => {
         '/api/products/[productId] GET': 'a public product page',
         '/api/store/data GET': 'a public store page',
         '/api/health GET': 'a liveness probe, which must answer before anyone is signed in',
+        '/api/newsletter POST': 'subscribing must not require an account',
     }
     // Every guarded endpoint now authenticates before reading its body, so there
     // are no exceptions left.
@@ -2858,5 +2862,131 @@ describe('integration: reconciliation reports itself as routine work', () => {
         await jobs.reconcileRazorpayPayments.handler({ step })
         expect(lines(console.log).find(l => l.event === 'payments_reconciled'))
             .toMatchObject({ repairedCount: 0 })
+    })
+})
+
+// The form used to discard the address and report success anyway, which is the
+// kind of thing a visitor only discovers by never hearing from you again.
+describe('integration: newsletter subscriptions are actually stored', () => {
+    const post = (body) => ({ json: async () => body, headers: new Headers({ 'x-forwarded-for': '9.9.9.9' }) })
+
+    beforeEach(() => {
+        __resetRateLimits()
+        prisma.newsletterSubscriber.upsert.mockResolvedValue({})
+    })
+
+    it('stores a valid address, lower-cased', async () => {
+        const { status } = await read(await newsletterApi.POST(post({ email: '  Reader@Example.COM ' })))
+        expect(status).toBe(200)
+        expect(prisma.newsletterSubscriber.upsert).toHaveBeenCalledWith({
+            where: { email: 'reader@example.com' },
+            update: {},
+            create: { email: 'reader@example.com' },
+        })
+    })
+
+    it('treats a repeat subscription as success, not a duplicate-key error', async () => {
+        await newsletterApi.POST(post({ email: 'reader@example.com' }))
+        const { status } = await read(await newsletterApi.POST(post({ email: 'reader@example.com' })))
+        expect(status).toBe(200)
+        // An upsert, so the second one cannot collide.
+        expect(prisma.newsletterSubscriber.upsert.mock.calls[1][0].update).toEqual({})
+    })
+
+    it('refuses anything that is not an address, and writes nothing', async () => {
+        for (const email of ['', 'nope', 'a@b', 'a@b.', '@example.com', 'a b@example.com', 42, null, undefined]) {
+            // A refusal still spends budget, which is the point of limiting
+            // before validating; reset so this loop measures validation only.
+            __resetRateLimits()
+            const { status } = await read(await newsletterApi.POST(post({ email })))
+            expect(status).toBe(400)
+        }
+        expect(prisma.newsletterSubscriber.upsert).not.toHaveBeenCalled()
+    })
+
+    it('refuses an address longer than the field allows', async () => {
+        const email = 'a'.repeat(250) + '@example.com'
+        expect((await read(await newsletterApi.POST(post({ email })))).status).toBe(400)
+        expect(prisma.newsletterSubscriber.upsert).not.toHaveBeenCalled()
+    })
+
+    it('rate limits by caller, so the table cannot be filled from one address', async () => {
+        for (let i = 0; i < 5; i++) {
+            expect((await read(await newsletterApi.POST(post({ email: `r${i}@example.com` })))).status).toBe(200)
+        }
+        const { status, body } = await read(await newsletterApi.POST(post({ email: 'r6@example.com' })))
+        expect(status).toBe(429)
+        expect(body.error).toMatch(/too many/i)
+    })
+
+    it('does not leak internals when the database fails', async () => {
+        prisma.newsletterSubscriber.upsert.mockRejectedValue(Object.assign(new Error('down'), { code: 'P1001' }))
+        const { status, body } = await read(await newsletterApi.POST(post({ email: 'reader@example.com' })))
+        expect(status).toBe(500)
+        expect(body.error).not.toMatch(/P1001|down/)
+        expect(body.errorId).toBeTruthy()
+    })
+})
+
+// The layout fetched the whole catalogue on every route while the shop page
+// fetched a filtered one. Child effects run before parent effects, so the
+// unfiltered answer always landed last and every search showed everything.
+describe('integration: a search result is not overwritten by a broader fetch', () => {
+    const slice = () => import('@/lib/features/product/productSlice')
+
+    const store = async () => {
+        const { default: reducer } = await slice()
+        const { configureStore } = await import('@reduxjs/toolkit')
+        return configureStore({ reducer: { product: reducer } })
+    }
+
+    const page = (names, query) => ({
+        products: names.map(name => ({ id: name, name })),
+        nextCursor: null,
+        append: false,
+        query,
+    })
+
+    it('keeps the results of the query currently being asked', async () => {
+        const { fetchProducts } = await slice()
+        const s = await store()
+
+        s.dispatch({ type: fetchProducts.pending.type, meta: { arg: { search: 'Mouse' } } })
+        // The catalogue-wide reply arrives after, as it used to from the layout.
+        s.dispatch({ type: fetchProducts.fulfilled.type, payload: page(['Earbuds', 'Watch', 'Mouse'], null) })
+
+        expect(s.getState().product.list).toEqual([])
+    })
+
+    it('accepts the reply that matches the current query', async () => {
+        const { fetchProducts } = await slice()
+        const s = await store()
+
+        s.dispatch({ type: fetchProducts.pending.type, meta: { arg: { search: 'Mouse' } } })
+        s.dispatch({ type: fetchProducts.fulfilled.type, payload: page(['Mouse'], 'Mouse') })
+
+        expect(s.getState().product.list.map(p => p.name)).toEqual(['Mouse'])
+    })
+
+    it('still indexes products from a superseded reply, so the cart can price them', async () => {
+        const { fetchProducts } = await slice()
+        const s = await store()
+
+        s.dispatch({ type: fetchProducts.pending.type, meta: { arg: { search: 'Mouse' } } })
+        s.dispatch({ type: fetchProducts.fulfilled.type, payload: page(['Earbuds'], null) })
+
+        // Dropped from the visible page, kept where basket pricing looks.
+        expect(s.getState().product.list).toEqual([])
+        expect(s.getState().product.byId.Earbuds).toBeTruthy()
+    })
+
+    it('treats an unfiltered fetch as its own query rather than a wildcard', async () => {
+        const { fetchProducts } = await slice()
+        const s = await store()
+
+        s.dispatch({ type: fetchProducts.pending.type, meta: { arg: {} } })
+        s.dispatch({ type: fetchProducts.fulfilled.type, payload: page(['Earbuds', 'Watch'], null) })
+
+        expect(s.getState().product.list.map(p => p.name)).toEqual(['Earbuds', 'Watch'])
     })
 })

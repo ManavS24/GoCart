@@ -759,7 +759,7 @@ describe('cartSlice uploadCart thunk', () => {
 describe('productSlice reducer', () => {
     it('starts empty and hydrates from fetchProducts', () => {
         const initial = product.default(undefined, { type: '@@INIT' })
-        expect(initial).toEqual({ list: [], byId: {}, nextCursor: null, status: 'idle' })
+        expect(initial).toEqual({ list: [], byId: {}, query: null, nextCursor: null, status: 'idle' })
         const s = product.default(initial, {
             type: product.fetchProducts.fulfilled.type,
             payload: { products: [{ id: 'p1' }], nextCursor: null },
@@ -808,7 +808,7 @@ describe('productSlice reducer', () => {
 
     it('coerces a missing payload to an empty list rather than undefined', () => {
         const s = product.default(
-            { list: [], byId: {}, nextCursor: null, status: 'idle' },
+            { list: [], byId: {}, query: null, nextCursor: null, status: 'idle' },
             { type: product.fetchProducts.fulfilled.type, payload: undefined })
         expect(s.list).toEqual([])
     })
@@ -883,7 +883,7 @@ describe('makeStore', () => {
     it('exposes the documented initial state', () => {
         expect(makeStore().getState()).toEqual({
             cart: { total: 0, cartItems: {}, status: 'idle', syncError: null },
-            product: { list: [], byId: {}, nextCursor: null, status: 'idle' },
+            product: { list: [], byId: {}, query: null, nextCursor: null, status: 'idle' },
             address: { list: [] },
             rating: { ratings: [] },
         })
