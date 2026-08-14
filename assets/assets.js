@@ -11,7 +11,7 @@ export const assets = {
     hero_product_img2,
 }
 
-export const categories = ["Headphones", "Speakers", "Watch", "Earbuds", "Mouse", "Accessories", "Home"];
+export const categories = ["Headphones", "Speakers", "Watch", "Earbuds", "Mouse", "Gaming", "Accessories", "Home"];
 
 export const ourSpecsData = [
     { title: "Free shipping on Plus", description: "Plus members pay no delivery charge on any order. Everyone else pays a flat fee per order.", icon: SendIcon, accent: '#05DF72' },

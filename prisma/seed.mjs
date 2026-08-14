@@ -71,23 +71,24 @@ const SELLERS = [
 ]
 
 const PRODUCTS = [
-    ['Modern Table Lamp',        'Warm, dimmable desk lighting with a machined aluminium body. Three brightness levels and a USB-C passthrough so it earns its footprint.', 4000, 2900, 'Home',       'product_img1.png',  'seed_store_greatstack'],
-    ['Smart Speaker (Graphite)', 'Room-filling sound from a speaker that disappears into the shelf. Multi-room pairing and a far-field mic that actually hears you.',        6000, 4400, 'Speakers',   'product_img2.png',  'seed_store_greatstack'],
-    ['Smart Watch (Silver)',     'Seven-day battery, always-on AMOLED, and sleep tracking that does not need a subscription to be useful.',                                  9000, 6900, 'Watch',      'product_img3.png',  'seed_store_greatstack'],
-    ['Wireless Headphones',      'Over-ear ANC with 40mm drivers and a 30-hour charge. Folds flat, travels well, and the case is not the size of a melon.',                 12000, 8900, 'Headphones', 'product_img4.png',  'seed_store_greatstack'],
-    ['Smart Watch (Midnight)',   'The silver model in a darker finish, with a sapphire crystal and a titanium case that shrugs off desk knocks.',                           11000, 7900, 'Watch',      'product_img5.png',  'seed_store_greatstack'],
-    ['Security Camera',          '2K indoor camera with on-device person detection, so routine footage never leaves your network.',                                          7500, 5500, 'Home',       'product_img6.png',  'seed_store_greatstack'],
-    ['Stylus Pen',               'Tilt-sensitive stylus with magnetic charging and 4096 pressure levels. Palm rejection that holds up mid-sketch.',                          9500, 7200, 'Accessories','product_img7.png',  'seed_store_greatstack'],
-    ['Home Theater System',      '5.1 channel setup with a wireless subwoofer and room calibration that takes about ninety seconds.',                                       32000, 24900, 'Speakers',   'product_img8.png',  'seed_store_greatstack'],
-    ['Wireless Earbuds',         'Compact ANC earbuds with a low-latency gaming mode and wireless charging. Six hours a charge, twenty-four in the case.',                  13000, 9900, 'Earbuds',    'product_img9.png',  'seed_store_happyshop'],
-    ['Smart Watch (Sport)',      'GPS, heart-rate and a 50m water rating in a 32g frame you forget you are wearing.',                                                       18000, 13900, 'Watch',      'product_img10.png', 'seed_store_happyshop'],
-    ['RGB Gaming Mouse',         '26K DPI optical sensor, 58g chassis and onboard memory for five profiles. Per-key lighting if you want it.',                               6500, 4500, 'Mouse',      'product_img11.png', 'seed_store_happyshop'],
-    ['Robot Vacuum',             'LiDAR mapping with no-go zones and a self-emptying dock. Handles cables better than most in its class.',                                  39900, 29900, 'Home',       'product_img12.png', 'seed_store_happyshop'],
-    ['Studio Monitor Speakers',  'Near-field monitors with a flat response and front-facing ports, so they behave close to a wall.',                                        28000, 21900, 'Speakers',   'product_img13.png', 'seed_store_happyshop'],
-    ['Noise Cancelling Headset', 'Broadcast-grade boom mic with hybrid ANC. Made for long calls, not just long flights.',                                                   15000, 11500, 'Headphones', 'product_img14.png', 'seed_store_happyshop'],
-    ['Sport Earbuds',            'Hooked, sweat-sealed earbuds that stay put through intervals. IPX7 and a five-minute quick charge.',                                       8500, 6200, 'Earbuds',    'product_img15.png', 'seed_store_happyshop'],
-    ['Ergonomic Vertical Mouse', 'A 57-degree vertical grip that takes the twist out of your forearm, with silent switches.',                                                7000, 5200, 'Mouse',      'product_img16.png', 'seed_store_happyshop'],
+    ['Modern Table Lamp',          'Warm, dimmable desk lighting with a machined aluminium body. Three brightness levels and a USB-C passthrough so it earns its footprint.', 4000, 2900, 'Home',        'product_img1.png',  'seed_store_greatstack'],
+    ['Smart Speaker (Graphite)',   'Room-filling sound from a speaker that disappears into the shelf. Multi-room pairing and a far-field mic that actually hears you.',        6000, 4400, 'Speakers',    'product_img2.png',  'seed_store_greatstack'],
+    ['Smart Watch (Silver)',       'Seven-day battery, always-on display, and sleep tracking that does not need a subscription to be useful.',                                9000, 6900, 'Watch',       'product_img3.png',  'seed_store_greatstack'],
+    ['Wireless Headphones',        'Over-ear ANC with 40mm drivers and a 30-hour charge. Folds flat, travels well, and the case is not the size of a melon.',                12000, 8900, 'Headphones',  'product_img4.png',  'seed_store_greatstack'],
+    ['Portable Bluetooth Speaker', 'A pocketable speaker with a fabric shell, RGB light bar and a carry loop. Fourteen hours a charge and IPX7, so the rain is fine.',        4500, 3200, 'Speakers',    'product_img5.png',  'seed_store_greatstack'],
+    ['Security Camera (2-pack)',   'Two pan-and-tilt indoor cameras with on-device person detection, so routine footage never leaves your network.',                          7500, 5500, 'Home',        'product_img6.png',  'seed_store_greatstack'],
+    ['Stylus Pen',                 'Tilt-sensitive stylus with magnetic charging and 4096 pressure levels. Palm rejection that holds up mid-sketch.',                         3500, 2400, 'Accessories', 'product_img7.png',  'seed_store_greatstack'],
+    ['Home Theatre System',        'A soundbar, wireless subwoofer and two satellites, with room calibration that takes about ninety seconds.',                             32000, 24900, 'Speakers',    'product_img8.png',  'seed_store_greatstack'],
+    ['Wireless Earbuds',           'Compact ANC earbuds with a low-latency gaming mode and wireless charging. Six hours a charge, twenty-four in the case.',                 13000, 9900, 'Earbuds',     'product_img9.png',  'seed_store_happyshop'],
+    ['Smart Watch (Midnight)',     'The square-cased model in a midnight finish, with cellular, a 45mm case and a matching sport band.',                                    18000, 13900, 'Watch',       'product_img10.png', 'seed_store_happyshop'],
+    ['Wireless Precision Mouse',   'A sculpted right-handed mouse with a magnetic scroll wheel, thumb wheel and 8000 DPI tracking that works on glass.',                     6500, 4500, 'Mouse',       'product_img11.png', 'seed_store_happyshop'],
+    ['Robot Vacuum',               'LiDAR mapping with no-go zones and a self-emptying dock. Handles cables better than most in its class.',                                39900, 29900, 'Home',        'product_img12.png', 'seed_store_happyshop'],
+    ['Smart Watch (Round)',        'A round-faced GPS watch with multi-band positioning, an AMOLED display and eleven days of battery in smartwatch mode.',                 28000, 21900, 'Watch',       'product_img13.png', 'seed_store_happyshop'],
+    ['Game Console',               'Current-generation console with an ultra-fast SSD, 4K output and a haptic controller in the box. Disc drive included.',                 55000, 49900, 'Gaming',      'product_img14.png', 'seed_store_happyshop'],
+    ['Noise Cancelling Headphones','Navy over-ear headphones tuned for long calls and longer flights. Adjustable ANC and 24 hours between charges.',                        15000, 11500, 'Headphones',  'product_img15.png', 'seed_store_happyshop'],
+    ['Portable Projector',         'A cylinder that swivels 180 degrees and auto-focuses on whatever wall you point it at. 1080p, with the speaker built in.',              45000, 34900, 'Home',        'product_img16.png', 'seed_store_happyshop'],
 ]
+
 
 const BUYERS = [
     { id: 'seed_user_kristin', name: 'Kristin Watson', email: 'kristin.watson@example.com' },
