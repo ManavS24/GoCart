@@ -20,7 +20,7 @@ Checklist:
 - [ ] The seeded **Nova Tech** store is still pending — it is what the admin approves on camera
 - [ ] Coupon `NEW20` exists (the site banner advertises it; a failed coupon on camera is fatal)
 - [ ] One product image saved locally, ready to drag in for the AI step
-- [ ] Stripe is in **test** mode
+- [ ] Razorpay keys are **test** keys (`rzp_test_…`)
 - [ ] Load the site once beforehand — Neon auto-suspends when idle and the first request is slow
 - [ ] Clean browser profile: no bookmarks bar, no extensions, zoom 110%
 
@@ -34,12 +34,18 @@ Checklist:
    multi-vendor part, worth saying out loud.
 4. Add to cart. Open the cart.
 5. Apply `NEW20`. The total updates.
-6. Select an address, choose **Stripe**, pay with `4242 4242 4242 4242`, any
-   future expiry, any CVC.
-7. Land on the orders page showing the order as **Paid**.
+6. Select an address. For a clean take choose **cash on delivery** — the order
+   is placed immediately and the orders page shows it at once.
+7. Land on the orders page showing the order, its status and its payment state.
 
-> The Paid state arrives via a Stripe webhook, not the checkout request. Say so
-> — it is the difference between a form that looks like checkout and one that is.
+> If you want to show the online path, choose **Pay Online** and use a Razorpay
+> test method. Say the important part out loud: the order is created *unpaid*,
+> and a scheduled sweep marks it paid once Razorpay confirms — up to five
+> minutes later. That lag is deliberate and worth explaining rather than hiding,
+> because it is the difference between a form that looks like checkout and one
+> that actually reconciles against a payment provider.
+>
+> On camera, prefer COD unless you can pause the recording for the sweep.
 
 ### 2 — Seller (1:15–2:15)
 
@@ -60,14 +66,14 @@ Checklist:
 
 ### Close (optional, 15s)
 
-Cut to `npm test` — 176 tests green in under a second — and the architecture
+Cut to `npm test` — 512 tests green in about a second — and the architecture
 diagram. Ties the product back to the engineering.
 
 ## Fallbacks
 
 In order of preference. Never live-demo when a recording will do.
 
-1. **The recording.** Immune to networks, cold starts and Stripe outages.
+1. **The recording.** Immune to networks, cold starts and provider outages.
 2. **Screenshots in the README** if video will not play.
 3. **`npm run dev`** against a locally seeded database if the deployment is down.
 4. **`npm test`** — always runs, no network, and still demonstrates rigour.
@@ -94,7 +100,7 @@ Eight, into `docs/screenshots/`:
 | `storefront.png` | Seeded catalogue — **this is the README hero** |
 | `product.png` | Product detail with ratings |
 | `cart.png` | Cart with `NEW20` applied |
-| `checkout.png` | Stripe checkout |
+| `checkout.png` | Cart with a coupon applied and the order summary |
 | `orders.png` | Order history showing Paid |
 | `seller-dashboard.png` | Earnings and ratings |
 | `ai-autofill.png` | Mid-autofill, fields populating |
@@ -111,7 +117,9 @@ conversation.
   across the basket, each seller sees only their own line items.
 - **Prices are never trusted from the client.** The request carries product ids
   and quantities; every unit price is re-read from the database.
-- **Webhooks are idempotent.** Stripe retries, so each event id is claimed
+- **Confirmation is idempotent.** The sweep only ever moves an order from
+  unpaid to paid, so running it twice cannot double-confirm. Were a webhook
+  added, each event id would be claimed
   before any mutation; cancellation only ever deletes unpaid orders.
 - **An authorization bug found by self-audit.** A helper returned `undefined`
   for non-approved stores, and Prisma silently drops `undefined` from a `where`

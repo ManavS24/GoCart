@@ -10,12 +10,12 @@ gates which sellers go live.
 graph LR
   B[Browser] --> V["Vercel — Next.js App Router<br/>pages + API routes"]
   V --> DB[(Neon Postgres)]
-  V --> CL[Clerk — auth & billing]
+  V --> CL[Clerk — auth]
   V --> IK[ImageKit — media]
   V --> AI[OpenAI-compatible endpoint]
-  ST[Stripe] -->|webhook| V
-  IN[Inngest] -->|webhook| V
-  V -->|create session| ST
+  V -->|create payment link| RZ[Razorpay]
+  V -->|poll for paid links| RZ
+  IN[Inngest] -->|invokes scheduled functions| V
   V -->|emit events| IN
 ```
 
@@ -51,7 +51,10 @@ erDiagram
   Address ||--o{ Order : "ships to"
 ```
 
-`Coupon` and `ProcessedWebhookEvent` stand alone — neither has foreign keys.
+`Coupon`, `CheckoutRequest`, `NewsletterSubscriber` and `ProcessedWebhookEvent`
+stand alone — none has foreign keys. `ProcessedWebhookEvent` is currently unused:
+it is the idempotency ledger a webhook would need, kept so that adding one back
+is an additive change rather than a new migration.
 
 A `User` row mirrors a Clerk account and is created asynchronously by the
 Inngest `clerk/user.created` handler, so it can briefly lag a first sign-in.
@@ -64,7 +67,8 @@ sequenceDiagram
   participant C as Client
   participant A as POST /api/orders
   participant D as Postgres
-  participant S as Stripe
+  participant R as Razorpay
+  participant J as Inngest sweep
   C->>A: addressId, items, paymentMethod, couponCode?
   A->>A: reject anonymous, bad payment method, non-positive quantities
   A->>D: address WHERE id AND userId
@@ -72,11 +76,12 @@ sequenceDiagram
   A->>D: products WHERE inStock AND store active+approved
   A->>A: recompute totals from DB prices, group by store
   A->>D: one Order per store
-  alt Stripe
-    A->>S: create checkout session (orderIds in metadata)
-    A-->>C: session URL — cart NOT cleared yet
-    S->>A: payment_intent.succeeded webhook
-    A->>D: mark paid, clear cart
+  alt Online
+    A->>R: create payment link (orderIds in notes)
+    A-->>C: payment URL — cart NOT cleared yet
+    C->>R: pays
+    J->>R: every 5 min, list paid links
+    J->>D: mark paid, clear cart
   else COD
     A->>D: clear cart
     A-->>C: confirmation
@@ -89,9 +94,11 @@ Three properties this flow guarantees:
   quantities; unit prices are never trusted from the request.
 - **A basket splits per seller.** One `Order` per store, so each seller sees and
   fulfils only their own line items. Shipping is charged once across the basket.
-- **A Stripe cart is cleared by the webhook, not the request.** The order exists
-  as unpaid until Stripe confirms, so an abandoned checkout leaves no phantom
-  paid order.
+- **An online cart is cleared on confirmation, not on request.** The order
+  exists as unpaid until Razorpay confirms it, so an abandoned checkout leaves
+  no phantom paid order. `PLACED_ORDER` — COD, or online and paid — is the
+  single predicate every read applies, so no two views can disagree about what
+  counts as a real order.
 
 ## Design decisions
 
@@ -111,8 +118,13 @@ non-approved stores, which turned the seller dashboard into a full platform data
 leak. The invariant is enforced by a test asserting the helper never resolves to
 `undefined`.
 
-**Webhook handling is idempotent by ledger.** Stripe retries deliveries and
-events can be replayed. Each event id is inserted into `ProcessedWebhookEvent`
+**Confirmation is a poll, not a push.** A webhook needs a public URL and a
+shared secret; asking Razorpay which links were paid needs only the API keys,
+so online checkout works on localhost. The cost is latency: an order shows as
+paid within five minutes rather than instantly. The sweep is idempotent — it
+only ever moves an order from unpaid to paid, so it cannot double-confirm, and
+it is safe to run more often. Each webhook event id would be inserted into
+`ProcessedWebhookEvent`
 *before* any mutation; a unique-constraint violation short-circuits the request.
 Cancellation deletes only orders where `isPaid` is false, so an out-of-order
 `canceled` delivery cannot destroy a paid order.
@@ -140,8 +152,18 @@ watched to fail.
 
 ## Known limitations
 
-- No rate limiting. Fine behind a demo deployment; would be required for real traffic.
-- Seller payouts are out of scope — Stripe collects into one account, and there
-  is no Connect integration.
-- Admin identity is environment-based, so changing administrators needs a redeploy.
-- No component or end-to-end browser tests; UI is covered by build and review only.
+- **Payment confirmation lags by up to five minutes.** There is no webhook, by
+  choice — see above. A shopper who pays sees the order flip to paid on the next
+  sweep, and their cart clears at the same moment.
+- **Rate limiting is per instance.** `lib/rateLimit.js` holds its window in
+  memory, so the real ceiling is `limit × warm instances`. A shared limiter
+  (Upstash, or the platform firewall) would be required for real traffic.
+- **Seller payouts are out of scope.** Razorpay collects into one account; there
+  is no split-settlement integration.
+- **Admin identity is environment-based**, so changing administrators needs a
+  redeploy. Clerk private metadata or a roles table would be the real answer.
+- **Money is stored as `Float`.** Arithmetic is done in integer minor units
+  behind `lib/money.js` and round-trips exactly at these magnitudes, but the
+  column type is a latent hazard for anything that bypasses that module.
+- **No end-to-end browser tests in CI.** Component tests cover the pieces that
+  carry money or data loss; full journeys are verified manually.
