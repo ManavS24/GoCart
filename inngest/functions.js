@@ -76,6 +76,13 @@ export const reconcileRazorpayPayments = inngest.createFunction(
     { id: 'reconcile-razorpay-payments' },
     { cron: '*/5 * * * *' },
     async ({ step }) => {
+        // The SDK throws on unset keys, failing every run. /api/orders refuses
+        // card checkout without them, so there is nothing to reconcile.
+        if (!(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET)) {
+            logger.error('payments_reconcile_skipped', { reason: 'Razorpay API keys are not set' })
+            return { skipped: true }
+        }
+
         const since = Math.floor(Date.now() / 1000) - RECONCILE_WINDOW_HOURS * 3600
 
         const repaired = await step.run('repair-unconfirmed-payments', async () => {
